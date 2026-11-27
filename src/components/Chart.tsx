@@ -21,6 +21,8 @@ import {
   type Trade,
 } from '../lib/upbit'
 import { buildIndicator, INDICATORS, type IndicatorGroup, type IndicatorId } from '../lib/chartIndicators'
+import { DrawingsPrimitive, loadDrawings, POINTS_NEEDED, saveDrawings, type ToolId } from '../lib/drawings'
+import DrawingToolbar from './DrawingToolbar'
 
 export const UP = '#e8473f'
 export const DOWN = '#3b74f0'
@@ -52,6 +54,56 @@ export default function Chart({ market, interval, indicators }: Props) {
   const [precision, setPrecision] = useState(0)
   const [legend, setLegend] = useState<Legend | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+
+  // Drawing tools
+  const primRef = useRef<DrawingsPrimitive | null>(null)
+  const intervalRef = useRef(interval)
+  intervalRef.current = interval
+  const marketRef = useRef(market)
+  marketRef.current = market
+  const [tool, setTool] = useState<ToolId>('cursor')
+  const toolRef = useRef(tool)
+  toolRef.current = tool
+  const [drafting, setDrafting] = useState(false)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [drawCount, setDrawCount] = useState(0)
+
+  const persist = () => {
+    const prim = primRef.current!
+    saveDrawings(marketRef.current, prim.drawings)
+    setDrawCount(prim.drawings.length)
+  }
+
+  const select = (id: string | null) => {
+    primRef.current!.selectedId = id
+    setSelectedId(id)
+    primRef.current!.update()
+  }
+
+  const chooseTool = (next: ToolId) => {
+    const prim = primRef.current!
+    prim.draft = null
+    setDrafting(false)
+    if (next !== 'cursor') select(null)
+    setTool(next)
+    prim.update()
+  }
+
+  const deleteSelected = () => {
+    const prim = primRef.current!
+    if (!prim.selectedId) return
+    prim.drawings = prim.drawings.filter((d) => d.id !== prim.selectedId)
+    select(null)
+    persist()
+  }
+
+  const clearAll = () => {
+    const prim = primRef.current!
+    if (!prim.drawings.length || !window.confirm('이 종목의 모든 드로잉을 삭제할까요?')) return
+    prim.drawings = []
+    select(null)
+    persist()
+  }
 
   // Create the chart once.
   useEffect(() => {
@@ -89,7 +141,77 @@ export default function Chart({ market, interval, indicators }: Props) {
     })
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
 
+    const prim = new DrawingsPrimitive(
+      () => candlesRef.current,
+      () => intervalRef.current,
+      formatPrice,
+    )
+    candles.attachPrimitive(prim)
+    primRef.current = prim
+    // Drawing: first click places the start point, second click finishes.
+    // We listen to raw pointer events because the chart's own click event drops
+    // a second click that lands inside its double-click window.
+    const onPoint = (x: number, y: number) => {
+      const current = toolRef.current
+      if (current === 'cursor') {
+        const id = prim.findAt(x, y)
+        prim.selectedId = id
+        setSelectedId(id)
+        prim.update()
+        return
+      }
+      const pt = prim.fromXY(x, y)
+      if (!pt) return
+      if (!prim.draft) {
+        prim.draft = { id: crypto.randomUUID(), type: current, points: POINTS_NEEDED[current] === 1 ? [pt] : [pt, pt] }
+        if (POINTS_NEEDED[current] > 1) {
+          setDrafting(true)
+          prim.update()
+          return
+        }
+      } else {
+        prim.draft.points[1] = pt
+      }
+      const done = prim.draft
+      prim.drawings = [...prim.drawings, done]
+      prim.draft = null
+      prim.selectedId = done.id
+      setSelectedId(done.id)
+      setDrafting(false)
+      toolRef.current = 'cursor' // a trailing dblclick must not start a new drawing
+      setTool('cursor')
+      saveDrawings(marketRef.current, prim.drawings)
+      setDrawCount(prim.drawings.length)
+      prim.update()
+    }
+
+    let down: { x: number; y: number } | null = null
+    const onPointerDown = (e: PointerEvent) => {
+      down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null
+    }
+    const onPointerUp = (e: PointerEvent) => {
+      if (!down || e.button !== 0) return
+      const dragged = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4 // panning, not a click
+      down = null
+      if (dragged) return
+      const rect = el.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      // Only the main price pane (not the price axis or indicator panes).
+      if (x > chart.timeScale().width() || y > chart.paneSize(0).height) return
+      onPoint(x, y)
+    }
+    el.addEventListener('pointerdown', onPointerDown, true)
+    el.addEventListener('pointerup', onPointerUp, true)
+
     chart.subscribeCrosshairMove((param) => {
+      if (prim.draft && param.point && (param.paneIndex ?? 0) === 0) {
+        const pt = prim.fromXY(param.point.x, param.point.y)
+        if (pt) {
+          prim.draft.points[1] = pt
+          prim.update()
+        }
+      }
       const bars = candlesRef.current
       if (!bars.length) return
       let bar = bars[bars.length - 1]
@@ -104,11 +226,42 @@ export default function Chart({ market, interval, indicators }: Props) {
     candleRef.current = candles
     volumeRef.current = volume
     return () => {
+      el.removeEventListener('pointerdown', onPointerDown, true)
+      el.removeEventListener('pointerup', onPointerUp, true)
       chart.remove()
       chartRef.current = null
+      primRef.current = null
       groupsRef.current = []
     }
   }, [])
+
+  // Each market keeps its own drawings.
+  useEffect(() => {
+    const prim = primRef.current!
+    prim.drawings = loadDrawings(market)
+    prim.draft = null
+    prim.selectedId = null
+    setSelectedId(null)
+    setDrafting(false)
+    setDrawCount(prim.drawings.length)
+    prim.update()
+  }, [market])
+
+  // Keyboard: Esc cancels, Delete/Backspace removes the selected drawing.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return
+      if (e.key === 'Escape') {
+        chooseTool('cursor')
+        select(null)
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        deleteSelected()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   // (Re)build indicator series whenever the selection or price precision changes.
   useEffect(() => {
@@ -250,6 +403,20 @@ export default function Chart({ market, interval, indicators }: Props) {
   const up = legend ? legend.close >= legend.open : true
   return (
     <div className="chart-wrap">
+      <DrawingToolbar
+        tool={tool}
+        onTool={chooseTool}
+        canDelete={selectedId !== null}
+        onDelete={deleteSelected}
+        canClear={drawCount > 0}
+        onClear={clearAll}
+      />
+      <div className={`chart-area ${tool !== 'cursor' ? 'drawing' : ''}`}>
+      {tool !== 'cursor' && (
+        <div className="draw-hint">
+          {drafting ? '끝 지점을 클릭하세요' : tool === 'hline' ? '가격 위치를 클릭하세요' : '시작 지점을 클릭하세요'} · Esc 취소
+        </div>
+      )}
       <div className="chart-legend">
         {legend && (
           <>
@@ -274,6 +441,7 @@ export default function Chart({ market, interval, indicators }: Props) {
       {status === 'loading' && <div className="chart-overlay">불러오는 중…</div>}
       {status === 'error' && <div className="chart-overlay">시세를 불러오지 못했습니다</div>}
       <div ref={containerRef} className="chart" />
+      </div>
     </div>
   )
 }
