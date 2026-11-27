@@ -30,7 +30,22 @@ export interface Drawing {
   id: string
   type: DrawingType
   points: Point[]
+  color?: string
+  dashed?: boolean
 }
+
+/** Palette offered in the style bar for a selected drawing. */
+export const DRAW_COLORS = ['#4f8cff', '#e8473f', '#26a69a', '#f5b301', '#a78bfa', '#e6e8eb']
+
+const DEFAULT_COLOR: Record<DrawingType, string> = {
+  trend: '#4f8cff',
+  ray: '#4f8cff',
+  hline: '#4f8cff',
+  fib: '#8a8f98',
+  rect: '#a78bfa',
+}
+
+export const colorOf = (d: Drawing) => d.color ?? DEFAULT_COLOR[d.type]
 
 export const POINTS_NEEDED: Record<DrawingType, number> = { trend: 2, ray: 2, hline: 1, fib: 2, rect: 2 }
 
@@ -46,9 +61,8 @@ export const INTERVAL_SEC: Record<Interval, number> = {
 
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
 const FIB_COLORS = ['#8a8f98', '#e8473f', '#ff9800', '#4caf50', '#26a69a', '#3b74f0', '#8a8f98']
-const LINE_COLOR = '#4f8cff'
-const RECT_COLOR = '#a78bfa'
 const HIT_PX = 6
+const HANDLE_PX = 8
 
 interface XY {
   x: number
@@ -111,7 +125,7 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
   }
 
   // ---- coordinate conversion ----
-  private timeToLogical(time: number): number | null {
+  timeToLogical(time: number): number | null {
     const bars = this.getBars()
     if (!bars.length) return null
     const iv = INTERVAL_SEC[this.getInterval()]
@@ -128,7 +142,7 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
     return lo + (time - bars[lo].time) / (bars[hi].time - bars[lo].time)
   }
 
-  private logicalToTime(logical: number): number | null {
+  logicalToTime(logical: number): number | null {
     const bars = this.getBars()
     if (!bars.length) return null
     const iv = INTERVAL_SEC[this.getInterval()]
@@ -165,11 +179,41 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
     return time === null ? null : { time, price }
   }
 
+  /** Raw (unsnapped) logical index and price under a pixel, used for dragging. */
+  rawAt(x: number, y: number): { logical: number; price: number } | null {
+    if (!this.chart || !this.series) return null
+    const logical = this.chart.timeScale().coordinateToLogical(x)
+    const price = this.series.coordinateToPrice(y)
+    return logical === null || price === null ? null : { logical, price }
+  }
+
+  /** Points shifted by whole bars and a price delta (for moving a drawing). */
+  shift(points: Point[], dBars: number, dPrice: number): Point[] {
+    return points.map((p) => {
+      const l = this.timeToLogical(p.time)
+      const time = l === null ? p.time : (this.logicalToTime(l + dBars) ?? p.time)
+      return { time, price: p.price + dPrice }
+    })
+  }
+
   // ---- hit testing ----
-  /** Library hook: show a pointer cursor when hovering a drawing. */
+  /** Library hook: cursor feedback when hovering drawings and their handles. */
   hitTest(x: number, y: number): PrimitiveHoveredItem | null {
+    if (this.handleAt(x, y) !== null) return { cursorStyle: 'crosshair', externalId: 'handle', zOrder: 'top' }
     const id = this.findAt(x, y)
-    return id ? { cursorStyle: 'pointer', externalId: id, zOrder: 'top' } : null
+    if (!id) return null
+    return { cursorStyle: id === this.selectedId ? 'move' : 'pointer', externalId: id, zOrder: 'top' }
+  }
+
+  /** Index of the selected drawing's control point under (x, y), if any. */
+  handleAt(x: number, y: number): number | null {
+    const d = this.drawings.find((dr) => dr.id === this.selectedId)
+    if (!d) return null
+    for (let i = 0; i < d.points.length; i++) {
+      const q = this.toXY(d.points[i])
+      if (q && Math.hypot(q.x - x, q.y - y) <= HANDLE_PX) return i
+    }
+    return null
   }
 
   /** Id of the topmost drawing under (x, y), if any. */
@@ -221,20 +265,22 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
         ctx.save()
         this.drawOne(ctx, d, pts as XY[], mediaSize.width, selected)
         ctx.restore()
-        if (selected) for (const q of pts as XY[]) this.handle(ctx, q)
+        if (selected) for (const q of pts as XY[]) this.handle(ctx, q, colorOf(d))
       }
     })
   }
 
   private drawOne(ctx: CanvasRenderingContext2D, d: Drawing, pts: XY[], width: number, selected: boolean) {
     const [a, b] = pts
+    const color = colorOf(d)
     ctx.lineWidth = selected ? 2 : 1.5
     ctx.font = '11px Pretendard, "Malgun Gothic", system-ui, sans-serif'
+    if (d.dashed && d.type !== 'fib') ctx.setLineDash([6, 4])
     switch (d.type) {
       case 'trend':
       case 'ray': {
         const end = d.type === 'ray' ? extendRay(a, b, width) : b
-        ctx.strokeStyle = LINE_COLOR
+        ctx.strokeStyle = color
         ctx.beginPath()
         ctx.moveTo(a.x, a.y)
         ctx.lineTo(end.x, end.y)
@@ -242,12 +288,13 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
         break
       }
       case 'hline': {
-        ctx.strokeStyle = LINE_COLOR
+        ctx.strokeStyle = color
         ctx.beginPath()
         ctx.moveTo(0, a.y)
         ctx.lineTo(width, a.y)
         ctx.stroke()
-        this.label(ctx, this.format(d.points[0].price), width - 6, a.y, LINE_COLOR, 'right')
+        ctx.setLineDash([])
+        this.label(ctx, this.format(d.points[0].price), width - 6, a.y, color, 'right')
         break
       }
       case 'rect': {
@@ -255,9 +302,9 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
         const y = Math.min(a.y, b.y)
         const w = Math.abs(b.x - a.x)
         const h = Math.abs(b.y - a.y)
-        ctx.fillStyle = RECT_COLOR + '26'
+        ctx.fillStyle = color + '26'
         ctx.fillRect(x, y, w, h)
-        ctx.strokeStyle = RECT_COLOR
+        ctx.strokeStyle = color
         ctx.strokeRect(x, y, w, h)
         break
       }
@@ -310,13 +357,13 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
     ctx.fillText(text, left + 5, y)
   }
 
-  private handle(ctx: CanvasRenderingContext2D, p: XY) {
+  private handle(ctx: CanvasRenderingContext2D, p: XY, color: string) {
     ctx.beginPath()
     ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2)
     ctx.fillStyle = '#fff'
     ctx.fill()
     ctx.lineWidth = 1.5
-    ctx.strokeStyle = LINE_COLOR
+    ctx.strokeStyle = color
     ctx.stroke()
   }
 }

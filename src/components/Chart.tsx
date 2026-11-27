@@ -21,7 +21,17 @@ import {
   type Trade,
 } from '../lib/upbit'
 import { buildIndicator, INDICATORS, type IndicatorGroup, type IndicatorId } from '../lib/chartIndicators'
-import { DrawingsPrimitive, loadDrawings, POINTS_NEEDED, saveDrawings, type ToolId } from '../lib/drawings'
+import {
+  colorOf,
+  DRAW_COLORS,
+  DrawingsPrimitive,
+  loadDrawings,
+  POINTS_NEEDED,
+  saveDrawings,
+  type Drawing,
+  type Point,
+  type ToolId,
+} from '../lib/drawings'
 import DrawingToolbar from './DrawingToolbar'
 
 export const UP = '#e8473f'
@@ -97,6 +107,18 @@ export default function Chart({ market, interval, indicators }: Props) {
     persist()
   }
 
+  const [, setStyleVersion] = useState(0)
+  const selectedDrawing = selectedId ? primRef.current?.drawings.find((d) => d.id === selectedId) : undefined
+  const updateStyle = (patch: Pick<Drawing, 'color' | 'dashed'>) => {
+    const prim = primRef.current!
+    const d = prim.drawings.find((dr) => dr.id === prim.selectedId)
+    if (!d) return
+    Object.assign(d, patch)
+    persist()
+    setStyleVersion((v) => v + 1)
+    prim.update()
+  }
+
   const clearAll = () => {
     const prim = primRef.current!
     if (!prim.drawings.length || !window.confirm('이 종목의 모든 드로잉을 삭제할까요?')) return
@@ -147,8 +169,7 @@ export default function Chart({ market, interval, indicators }: Props) {
       formatPrice,
     )
     candles.attachPrimitive(prim)
-    primRef.current = prim
-    // Drawing: first click places the start point, second click finishes.
+    primRef.current = prim    // Drawing: first click places the start point, second click finishes.
     // We listen to raw pointer events because the chart's own click event drops
     // a second click that lands inside its double-click window.
     const onPoint = (x: number, y: number) => {
@@ -185,24 +206,90 @@ export default function Chart({ market, interval, indicators }: Props) {
       prim.update()
     }
 
-    let down: { x: number; y: number } | null = null
-    const onPointerDown = (e: PointerEvent) => {
-      down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null
-    }
-    const onPointerUp = (e: PointerEvent) => {
-      if (!down || e.button !== 0) return
-      const dragged = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4 // panning, not a click
-      down = null
-      if (dragged) return
+    /** Pointer position relative to the main price pane, or null when outside it. */
+    const local = (e: PointerEvent) => {
       const rect = el.getBoundingClientRect()
       const x = e.clientX - rect.left
       const y = e.clientY - rect.top
       // Only the main price pane (not the price axis or indicator panes).
-      if (x > chart.timeScale().width() || y > chart.paneSize(0).height) return
-      onPoint(x, y)
+      if (x < 0 || y < 0 || x > chart.timeScale().width() || y > chart.paneSize(0).height) return null
+      return { x, y }
+    }
+
+    // Editing: in cursor mode, dragging a selected drawing's handle moves that
+    // point; dragging the drawing's body moves the whole drawing.
+    let down: { x: number; y: number } | null = null
+    let drag: {
+      id: string
+      index: number | null // control point index, or null to move the whole drawing
+      orig: Point[]
+      start: { logical: number; price: number }
+      moved: boolean
+    } | null = null
+    const setChartInteractive = (on: boolean) => chart.applyOptions({ handleScroll: on, handleScale: on })
+
+    const onPointerDown = (e: PointerEvent) => {
+      down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null
+      if (!down || toolRef.current !== 'cursor') return
+      const pos = local(e)
+      if (!pos) return
+      const handle = prim.handleAt(pos.x, pos.y)
+      const id = handle !== null ? prim.selectedId : prim.findAt(pos.x, pos.y)
+      const d = prim.drawings.find((dr) => dr.id === id)
+      const start = prim.rawAt(pos.x, pos.y)
+      if (!d || !start) return
+      drag = { id: d.id, index: handle, orig: d.points.map((p) => ({ ...p })), start, moved: false }
+      if (prim.selectedId !== d.id) {
+        prim.selectedId = d.id
+        setSelectedId(d.id)
+      }
+      setChartInteractive(false) // don't pan the chart while dragging a drawing
+      el.setPointerCapture(e.pointerId)
+      prim.update()
+    }
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!drag) return
+      const d = prim.drawings.find((dr) => dr.id === drag!.id)
+      if (!d) return
+      const rect = el.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      if (drag.index !== null) {
+        const pt = prim.fromXY(x, y)
+        if (!pt) return
+        d.points = d.points.map((p, i) => (i === drag!.index ? pt : p))
+      } else {
+        const cur = prim.rawAt(x, y)
+        if (!cur) return
+        d.points = prim.shift(drag.orig, Math.round(cur.logical - drag.start.logical), cur.price - drag.start.price)
+      }
+      drag.moved = true
+      prim.update()
+    }
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (drag) {
+        const moved = drag.moved
+        drag = null
+        setChartInteractive(true)
+        if (moved) {
+          down = null
+          saveDrawings(marketRef.current, prim.drawings)
+          return
+        }
+      }
+      if (!down || e.button !== 0) return
+      const dragged = Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4 // panning, not a click
+      down = null
+      if (dragged) return
+      const pos = local(e)
+      if (pos) onPoint(pos.x, pos.y)
     }
     el.addEventListener('pointerdown', onPointerDown, true)
+    el.addEventListener('pointermove', onPointerMove, true)
     el.addEventListener('pointerup', onPointerUp, true)
+    el.addEventListener('pointercancel', onPointerUp, true)
 
     chart.subscribeCrosshairMove((param) => {
       if (prim.draft && param.point && (param.paneIndex ?? 0) === 0) {
@@ -227,7 +314,9 @@ export default function Chart({ market, interval, indicators }: Props) {
     volumeRef.current = volume
     return () => {
       el.removeEventListener('pointerdown', onPointerDown, true)
+      el.removeEventListener('pointermove', onPointerMove, true)
       el.removeEventListener('pointerup', onPointerUp, true)
+      el.removeEventListener('pointercancel', onPointerUp, true)
       chart.remove()
       chartRef.current = null
       primRef.current = null
@@ -415,6 +504,41 @@ export default function Chart({ market, interval, indicators }: Props) {
       {tool !== 'cursor' && (
         <div className="draw-hint">
           {drafting ? '끝 지점을 클릭하세요' : tool === 'hline' ? '가격 위치를 클릭하세요' : '시작 지점을 클릭하세요'} · Esc 취소
+        </div>
+      )}
+      {tool === 'cursor' && selectedDrawing && (
+        <div className="draw-props" role="toolbar" aria-label="드로잉 스타일">
+          {selectedDrawing.type !== 'fib' && (
+            <>
+              {DRAW_COLORS.map((c) => (
+                <button
+                  key={c}
+                  className={`swatch ${colorOf(selectedDrawing) === c ? 'on' : ''}`}
+                  style={{ background: c }}
+                  title={c}
+                  aria-label={`색상 ${c}`}
+                  onClick={() => updateStyle({ color: c })}
+                />
+              ))}
+              <span className="draw-sep-v" />
+              <button
+                className={`tb-btn ${!selectedDrawing.dashed ? 'on' : ''}`}
+                onClick={() => updateStyle({ dashed: false })}
+              >
+                실선
+              </button>
+              <button
+                className={`tb-btn ${selectedDrawing.dashed ? 'on' : ''}`}
+                onClick={() => updateStyle({ dashed: true })}
+              >
+                점선
+              </button>
+              <span className="draw-sep-v" />
+            </>
+          )}
+          <button className="tb-btn" onClick={deleteSelected}>
+            삭제
+          </button>
         </div>
       )}
       <div className="chart-legend">
