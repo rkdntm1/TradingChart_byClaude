@@ -4,4 +4,7 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Relative asset paths so the build works from any sub-path,
+  // e.g. GitHub Pages at https://<user>.github.io/TradingChart_byClaude/
+  base: './',
 })

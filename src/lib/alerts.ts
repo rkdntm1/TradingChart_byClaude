@@ -68,7 +68,8 @@ export async function requestNotificationPermission(): Promise<NotifyPermission>
 export function showSystemNotification(title: string, body: string, onClick?: () => void): boolean {
   if (notificationPermission() !== 'granted') return false
   try {
-    const n = new Notification(title, { body, tag: title, icon: '/favicon.svg' })
+    const icon = new URL(`${import.meta.env.BASE_URL}favicon.svg`, window.location.href).href
+    const n = new Notification(title, { body, tag: title, icon })
     n.onclick = () => {
       window.focus()
       onClick?.()
