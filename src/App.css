@@ -1,6 +1,6 @@
 .app {
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: minmax(0, 1fr) 380px;
   grid-template-rows: auto 1fr;
   height: 100%;
   gap: 1px;
@@ -186,9 +186,9 @@
 .list-head,
 .row {
   display: grid;
-  grid-template-columns: 22px 1fr 96px 64px 64px;
+  grid-template-columns: 18px minmax(0, 1fr) 84px 60px 46px;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 0 12px;
 }
 .list-head {
