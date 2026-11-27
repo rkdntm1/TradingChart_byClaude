@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Chart from './components/Chart'
+import { INDICATORS, type IndicatorId } from './lib/chartIndicators'
 import Watchlist from './components/Watchlist'
 import { useMarketData } from './hooks/useMarketData'
 import { formatPrice, formatVolumeKrw, INTERVALS, type Interval } from './lib/upbit'
@@ -26,6 +27,16 @@ function usePersisted<T extends string>(key: string, initial: T) {
 export default function App() {
   const [market, setMarket] = usePersisted<string>('chartview:market', 'KRW-BTC')
   const [interval, setInterval] = usePersisted<Interval>('chartview:interval', '15m')
+  const [indicatorStr, setIndicatorStr] = usePersisted<string>('chartview:indicators', 'ma,rsi')
+  const indicators = useMemo(
+    () => indicatorStr.split(',').filter((s): s is IndicatorId => INDICATORS.some((d) => d.id === s)),
+    [indicatorStr],
+  )
+  const toggleIndicator = (id: IndicatorId) =>
+    setIndicatorStr((prev) => {
+      const cur = prev.split(',').filter(Boolean)
+      return (cur.includes(id) ? cur.filter((i) => i !== id) : [...cur, id]).join(',')
+    })
   const { markets, tickers } = useMarketData()
 
   const info = markets.find((m) => m.market === market)
@@ -80,8 +91,18 @@ export default function App() {
               {iv.label}
             </button>
           ))}
+          <span className="sep" />
+          {INDICATORS.map((d) => (
+            <button
+              key={d.id}
+              className={`tb-btn ${indicators.includes(d.id) ? 'on' : ''}`}
+              onClick={() => toggleIndicator(d.id)}
+            >
+              {d.label}
+            </button>
+          ))}
         </div>
-        <Chart market={market} interval={interval} />
+        <Chart market={market} interval={interval} indicators={indicators} />
       </main>
 
       <Watchlist markets={markets} tickers={tickers} selected={market} onSelect={setMarket} />

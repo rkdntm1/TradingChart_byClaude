@@ -20,6 +20,7 @@ import {
   type Interval,
   type Trade,
 } from '../lib/upbit'
+import { buildIndicator, INDICATORS, type IndicatorGroup, type IndicatorId } from '../lib/chartIndicators'
 
 export const UP = '#e8473f'
 export const DOWN = '#3b74f0'
@@ -29,6 +30,7 @@ const toTime = (utcSec: number) => (utcSec + KST_OFFSET) as UTCTimestamp
 interface Props {
   market: string
   interval: Interval
+  indicators: IndicatorId[]
 }
 
 interface Legend {
@@ -39,12 +41,15 @@ interface Legend {
   volume: number
 }
 
-export default function Chart({ market, interval }: Props) {
+export default function Chart({ market, interval, indicators }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const candlesRef = useRef<Candle[]>([])
+  const groupsRef = useRef<IndicatorGroup[]>([])
+  const [groups, setGroups] = useState<IndicatorGroup[]>([])
+  const [precision, setPrecision] = useState(0)
   const [legend, setLegend] = useState<Legend | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
 
@@ -101,8 +106,27 @@ export default function Chart({ market, interval }: Props) {
     return () => {
       chart.remove()
       chartRef.current = null
+      groupsRef.current = []
     }
   }, [])
+
+  // (Re)build indicator series whenever the selection or price precision changes.
+  useEffect(() => {
+    const chart = chartRef.current!
+    for (const g of groupsRef.current) g.series.forEach((s) => chart.removeSeries(s))
+    while (chart.panes().length > 1) chart.removePane(chart.panes().length - 1)
+
+    // Keep a stable order regardless of click order.
+    const ordered = INDICATORS.filter((d) => indicators.includes(d.id))
+    let nextPane = 1
+    const built = ordered.map((d) => buildIndicator(d.id, chart, d.pane === 'overlay' ? 0 : nextPane++, precision))
+    const panes = chart.panes()
+    for (let i = 1; i < panes.length; i++) panes[i].setHeight(110)
+
+    groupsRef.current = built
+    setGroups(built)
+    built.forEach((g) => g.render(candlesRef.current, false))
+  }, [indicators, precision])
 
   // Load data + live updates whenever the market or interval changes.
   useEffect(() => {
@@ -124,13 +148,24 @@ export default function Chart({ market, interval }: Props) {
       const bars = candlesRef.current
       candleSeries.setData(bars.map(ohlcBar))
       volumeSeries.setData(bars.map(volBar))
+      groupsRef.current.forEach((g) => g.render(bars, false))
     }
 
+    // Live trades can arrive dozens of times a second; draw at most once per frame.
+    let frame = 0
+    let newBar = false
     const renderLast = () => {
+      frame = 0
       const bars = candlesRef.current
       const last = bars[bars.length - 1]
       candleSeries.update(ohlcBar(last))
       volumeSeries.update(volBar(last))
+      groupsRef.current.forEach((g) => g.render(bars, !newBar))
+      newBar = false
+    }
+    const scheduleRender = (isNewBar: boolean) => {
+      newBar ||= isNewBar
+      if (!frame) frame = requestAnimationFrame(renderLast)
     }
 
     setStatus('loading')
@@ -145,6 +180,7 @@ export default function Chart({ market, interval }: Props) {
         candleSeries.applyOptions({
           priceFormat: { type: 'price', precision, minMove: 1 / 10 ** precision },
         })
+        setPrecision(precision)
         renderAll()
         chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, bars.length - 120), to: bars.length + 6 })
         setLegend(bars.length ? { ...bars[bars.length - 1] } : null)
@@ -193,17 +229,19 @@ export default function Chart({ market, interval }: Props) {
       if (start < last.time) return
       if (start > last.time) {
         bars.push({ time: start, open: t.trade_price, high: t.trade_price, low: t.trade_price, close: t.trade_price, volume: t.trade_volume })
+        scheduleRender(true)
       } else {
         last.high = Math.max(last.high, t.trade_price)
         last.low = Math.min(last.low, t.trade_price)
         last.close = t.trade_price
         last.volume += t.trade_volume
+        scheduleRender(false)
       }
-      renderLast()
     })
 
     return () => {
       cancelled = true
+      cancelAnimationFrame(frame)
       unsubscribe()
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange)
     }
@@ -221,6 +259,16 @@ export default function Chart({ market, interval }: Props) {
             <span>종 <b className={up ? 'up' : 'down'}>{formatPrice(legend.close)}</b></span>
             <span>거래량 <b>{legend.volume.toLocaleString('ko-KR', { maximumFractionDigits: 3 })}</b></span>
           </>
+        )}
+        {groups.some((g) => g.id === 'ma' || g.id === 'bb') && (
+          <div className="ind">
+            {groups
+              .filter((g) => g.id === 'ma' || g.id === 'bb')
+              .flatMap((g) => g.legend)
+              .map((l) => (
+                <span key={l.label} style={{ color: l.color }}>{l.label}</span>
+              ))}
+          </div>
         )}
       </div>
       {status === 'loading' && <div className="chart-overlay">불러오는 중…</div>}
