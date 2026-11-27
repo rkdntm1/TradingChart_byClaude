@@ -1,6 +1,8 @@
 # ChartView
 
-업비트 공개 API로 만든 트레이딩뷰 스타일의 실시간 코인 차트 웹앱입니다.
+빗썸 공개 API로 만든 트레이딩뷰 스타일의 실시간 코인 차트 웹앱입니다.
+
+데모: https://rkdntm1.github.io/TradingChart_byClaude/
 
 ## 기능
 
@@ -30,7 +32,9 @@ npm run dev      # http://localhost:5173
 npm run build    # dist/ 에 정적 파일 생성
 ```
 
-API 키가 필요 없습니다. 브라우저에서 업비트 API(`api.upbit.com`)를 직접 호출합니다.
+API 키가 필요 없습니다. 브라우저에서 빗썸 API(`api.bithumb.com`)를 직접 호출합니다.
+
+> 처음에는 업비트 API를 썼지만, 업비트는 브라우저에서 보낸 요청(Origin 헤더 포함)을 10초당 1회로 제한해서 배포 사이트에서 시세를 불러올 수 없었습니다. 빗썸 v1 API는 업비트와 형식이 거의 같고 브라우저에서 바로 호출할 수 있어서 전환했습니다.
 
 ## 배포 (GitHub Pages)
 
@@ -44,7 +48,7 @@ API 키가 필요 없습니다. 브라우저에서 업비트 API(`api.upbit.com`
 
 ```
 src/
-  lib/upbit.ts            업비트 REST/WebSocket 클라이언트, 캔들 버킷 계산, 포맷터
+  lib/bithumb.ts          빗썸 REST/WebSocket 클라이언트, KST 캔들 버킷 계산, 재시도, 포맷터
   lib/indicators.ts       SMA / EMA / 볼린저밴드 / RSI / MACD 계산
   lib/chartIndicators.ts  지표 → lightweight-charts 시리즈 연결
   lib/drawings.ts         드로잉 렌더링(series primitive), 좌표 변환, 히트 테스트, 저장
@@ -63,7 +67,7 @@ src/
 
 - React 19 + TypeScript + Vite
 - [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) v5 (Apache-2.0, 출처 표기 필요)
-- 업비트 Open API (시세 조회는 인증 불필요)
+- 빗썸 공개 API v1 (시세 조회는 인증 불필요)
 
 ## 다음 단계 아이디어
 
