@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { formatPrice, formatVolumeKrw, type Market, type Ticker } from '../lib/upbit'
+import { formatPrice, formatVolumeKrw, type Market, type Ticker } from '../lib/bithumb'
 
 const FAV_KEY = 'chartview:favorites'
 
@@ -94,7 +94,7 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
         {!rows.length && <div className="empty">{markets.length ? '검색 결과가 없습니다' : '불러오는 중…'}</div>}
       </div>
       <div className="foot">
-        시세: Upbit 공개 API · 차트:{' '}
+        시세: 빗썸 공개 API · 차트:{' '}
         <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
           TradingView Lightweight Charts
         </a>

@@ -20,7 +20,7 @@ import {
   type Candle,
   type Interval,
   type Trade,
-} from '../lib/upbit'
+} from '../lib/bithumb'
 import { buildIndicator, INDICATORS, type IndicatorGroup, type IndicatorId } from '../lib/chartIndicators'
 import {
   colorOf,
@@ -485,7 +485,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         })
         .catch(() => {})
         .finally(() => {
-          // brief pause to respect Upbit rate limits
+          // brief pause to respect exchange rate limits
           setTimeout(() => (loadingMore = false), 300)
         })
     }

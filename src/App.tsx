@@ -6,7 +6,7 @@ import { useAlerts } from './hooks/useAlerts'
 import { INDICATORS, type IndicatorId } from './lib/chartIndicators'
 import Watchlist from './components/Watchlist'
 import { useMarketData } from './hooks/useMarketData'
-import { formatPrice, formatVolumeKrw, INTERVALS, pricePrecision, type Interval } from './lib/upbit'
+import { formatPrice, formatVolumeKrw, INTERVALS, pricePrecision, type Interval } from './lib/bithumb'
 import './App.css'
 
 function usePersisted<T extends string>(key: string, initial: T) {

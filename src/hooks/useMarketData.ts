@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { fetchMarkets, fetchTickers, subscribe, type Market, type Ticker } from '../lib/upbit'
+import { fetchMarkets, fetchTickers, isValidTicker, subscribe, type Market, type Ticker } from '../lib/bithumb'
 
 /** All KRW markets plus live 24h tickers for each (batched to one render per frame). */
 export function useMarketData() {
@@ -31,6 +31,7 @@ export function useMarketData() {
         if (cancelled) return
         setTickers(Object.fromEntries(initial.map((t) => [t.code, t])))
         unsubscribe = subscribe<Ticker>('ticker', codes, (t) => {
+          if (!isValidTicker(t)) return
           pending[t.code] = t
           if (!frame) frame = requestAnimationFrame(flush)
         })

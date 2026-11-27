@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { AlertToast } from '../hooks/useAlerts'
-import { formatPrice } from '../lib/upbit'
+import { formatPrice } from '../lib/bithumb'
 
 interface Props {
   toasts: AlertToast[]

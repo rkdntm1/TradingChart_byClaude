@@ -1,11 +1,20 @@
-// Upbit public API client (REST + WebSocket). No API key needed.
-// Docs: https://global-docs.upbit.com/reference
+// Bithumb public API client (REST + WebSocket). No API key needed.
+// Docs: https://apidocs.bithumb.com
+//
+// We switched from Upbit because Upbit limits browser requests (those with an
+// Origin header) to 1 per 10 seconds, which breaks a site served from GitHub
+// Pages. Bithumb's v1 API uses the same shapes as Upbit's, with a few
+// differences handled below: KST-aligned candles, KST `to` parameter, a much
+// longer market list, and errors returned as `{ error }` bodies.
 
-const REST = 'https://api.upbit.com/v1'
-const WS = 'wss://api.upbit.com/websocket/v1'
+const REST = 'https://api.bithumb.com/v1'
+const WS = 'wss://ws-api.bithumb.com/websocket/v1'
 
 /** Shift used to render chart times in KST (lightweight-charts works in UTC). */
 export const KST_OFFSET = 9 * 3600
+
+/** Max market codes per /ticker request — longer URLs fail with 414. */
+const TICKER_CHUNK = 100
 
 export type Interval = '1m' | '5m' | '15m' | '1h' | '4h' | '1D' | '1W'
 
@@ -65,24 +74,37 @@ function candlePath(interval: Interval): string {
   }
 }
 
-/** Start (UTC seconds) of the bar that contains `tsMs` for the given interval. */
+/**
+ * Start (UTC seconds) of the bar that contains `tsMs` for the given interval.
+ * Bithumb aligns candles to Korean time: 4h bars at 00/04/08/12/16/20 KST,
+ * daily bars at 00:00 KST and weekly bars on Monday 00:00 KST.
+ */
 export function bucketStart(tsMs: number, interval: Interval): number {
-  const s = Math.floor(tsMs / 1000)
+  const s = Math.floor(tsMs / 1000) + KST_OFFSET // work in KST, convert back at the end
   const minutes: Partial<Record<Interval, number>> = { '1m': 1, '5m': 5, '15m': 15, '1h': 60, '4h': 240 }
   const m = minutes[interval]
-  if (m) return s - (s % (m * 60))
-  const day = s - (s % 86400) // Upbit daily candles start at 00:00 UTC (09:00 KST)
-  if (interval === '1D') return day
-  // Weekly candles start on Monday 00:00 UTC. 1970-01-01 was a Thursday.
-  const dow = (Math.floor(day / 86400) + 3) % 7 // 0 = Monday
-  return day - dow * 86400
+  let start: number
+  if (m) {
+    start = s - (s % (m * 60))
+  } else {
+    const day = s - (s % 86400)
+    if (interval === '1D') {
+      start = day
+    } else {
+      // 1970-01-01 was a Thursday.
+      const dow = (Math.floor(day / 86400) + 3) % 7 // 0 = Monday
+      start = day - dow * 86400
+    }
+  }
+  return start - KST_OFFSET
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /**
- * GET JSON with retries. Upbit answers 429 when an IP exceeds its rate limit
- * (e.g. several tabs open); back off and try again instead of failing for good.
+ * GET JSON with retries on 429 / 5xx / network errors (exponential backoff,
+ * honoring Retry-After). Bithumb may also return HTTP 200 with an `{ error }`
+ * body, which is treated as a non-retriable failure.
  */
 async function getJson<T>(url: string, attempts = 5): Promise<T> {
   for (let i = 0; ; i++) {
@@ -92,9 +114,15 @@ async function getJson<T>(url: string, attempts = 5): Promise<T> {
     } catch (err) {
       if (i >= attempts - 1) throw err // network error, out of retries
     }
-    if (res?.ok) return res.json() as Promise<T>
+    if (res?.ok) {
+      const body = await res.json()
+      if (body && !Array.isArray(body) && body.error) {
+        throw new Error(`Bithumb API error: ${body.error.message ?? JSON.stringify(body.error)}`)
+      }
+      return body as T
+    }
     const retriable = !res || res.status === 429 || res.status >= 500
-    if (!retriable || i >= attempts - 1) throw new Error(`Upbit API ${res?.status ?? 'network'}: ${url}`)
+    if (!retriable || i >= attempts - 1) throw new Error(`Bithumb API ${res?.status ?? 'network'}: ${url}`)
     const retryAfter = Number(res?.headers.get('Retry-After'))
     await sleep(retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** i + Math.random() * 300)
   }
@@ -117,7 +145,8 @@ interface RawCandle {
 /** Fetch up to 200 candles ending before `toUtcSec` (exclusive), oldest first. */
 export async function fetchCandles(market: string, interval: Interval, toUtcSec?: number): Promise<Candle[]> {
   const params = new URLSearchParams({ market, count: '200' })
-  if (toUtcSec) params.set('to', new Date(toUtcSec * 1000).toISOString().slice(0, 19) + 'Z')
+  // Bithumb reads `to` as Korean time in "yyyy-MM-dd HH:mm:ss" (a trailing Z is rejected).
+  if (toUtcSec) params.set('to', new Date((toUtcSec + KST_OFFSET) * 1000).toISOString().slice(0, 19).replace('T', ' '))
   const raw = await getJson<RawCandle[]>(`${REST}/${candlePath(interval)}?${params}`)
   return raw
     .map((c) => ({
@@ -132,12 +161,21 @@ export async function fetchCandles(market: string, interval: Interval, toUtcSec?
 }
 
 export async function fetchTickers(markets: string[]): Promise<Ticker[]> {
-  const raw = await getJson<(Ticker & { market: string })[]>(`${REST}/ticker?markets=${markets.join(',')}`)
-  return raw.map((t) => ({ ...t, code: t.market }))
+  const out: Ticker[] = []
+  // Sequential chunks: keeps URLs short and request bursts small.
+  for (let i = 0; i < markets.length; i += TICKER_CHUNK) {
+    const chunk = markets.slice(i, i + TICKER_CHUNK)
+    const raw = await getJson<(Ticker & { market: string })[]>(`${REST}/ticker?markets=${chunk.join(',')}`)
+    out.push(...raw.map((t) => ({ ...t, code: t.market })).filter(isValidTicker))
+  }
+  return out
 }
 
+/** Newly listed coins with no trades yet come back with `trade_price: null`. */
+export const isValidTicker = (t: Ticker) => Number.isFinite(t?.trade_price)
+
 /**
- * Open an auto-reconnecting Upbit WebSocket subscription.
+ * Open an auto-reconnecting Bithumb WebSocket subscription.
  * Returns a function that closes it.
  */
 export function subscribe<T>(type: 'ticker' | 'trade', codes: string[], onMessage: (msg: T) => void): () => void {
@@ -177,7 +215,8 @@ export function subscribe<T>(type: 'ticker' | 'trade', codes: string[], onMessag
   }
 }
 
-export function formatPrice(p: number): string {
+export function formatPrice(p: number | null | undefined): string {
+  if (p == null || !Number.isFinite(p)) return '-'
   if (p >= 100) return Math.round(p).toLocaleString('ko-KR')
   if (p >= 1) return p.toLocaleString('ko-KR', { maximumFractionDigits: 2 })
   return p.toLocaleString('ko-KR', { maximumFractionDigits: 6 })
@@ -191,7 +230,8 @@ export function pricePrecision(p: number): number {
   return 6
 }
 
-export function formatVolumeKrw(v: number): string {
+export function formatVolumeKrw(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '-'
   if (v >= 1e12) return (v / 1e12).toFixed(1) + '조'
   if (v >= 1e8) return Math.round(v / 1e8).toLocaleString('ko-KR') + '억'
   if (v >= 1e4) return Math.round(v / 1e4).toLocaleString('ko-KR') + '만'

@@ -6,7 +6,7 @@ import {
   type NotifyPermission,
   type PriceAlert,
 } from '../lib/alerts'
-import { formatPrice, type Ticker } from '../lib/upbit'
+import { formatPrice, type Ticker } from '../lib/bithumb'
 
 interface Props {
   market: string

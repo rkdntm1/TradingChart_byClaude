@@ -9,7 +9,7 @@ import {
   unlockSound,
   type PriceAlert,
 } from '../lib/alerts'
-import { formatPrice, type Ticker } from '../lib/upbit'
+import { formatPrice, type Ticker } from '../lib/bithumb'
 
 export interface AlertToast {
   id: string
