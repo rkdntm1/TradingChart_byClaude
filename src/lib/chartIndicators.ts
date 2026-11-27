@@ -9,7 +9,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { bollinger, macd, rsi, sma, type Series } from './indicators'
-import { KST_OFFSET, type Candle } from './bithumb'
+import { KST_OFFSET, type Candle } from './market'
 
 export type IndicatorId = 'ma' | 'bb' | 'rsi' | 'macd'
 

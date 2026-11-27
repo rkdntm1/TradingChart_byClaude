@@ -12,15 +12,13 @@ import {
 } from 'lightweight-charts'
 import {
   bucketStart,
-  fetchCandles,
   formatPrice,
   KST_OFFSET,
-  pricePrecision,
-  subscribe,
+  priceDecimals,
+  sourceOf,
   type Candle,
   type Interval,
-  type Trade,
-} from '../lib/bithumb'
+} from '../lib/market'
 import { buildIndicator, INDICATORS, type IndicatorGroup, type IndicatorId } from '../lib/chartIndicators'
 import {
   colorOf,
@@ -67,6 +65,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   const candlesRef = useRef<Candle[]>([])
   const groupsRef = useRef<IndicatorGroup[]>([])
+  const hoveringRef = useRef(false)
   const [groups, setGroups] = useState<IndicatorGroup[]>([])
   const [precision, setPrecision] = useState(0)
   const [legend, setLegend] = useState<Legend | null>(null)
@@ -151,7 +150,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderVisible: false },
       timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 6 },
-      localization: { locale: 'ko-KR', priceFormatter: formatPrice },
+      localization: { locale: 'ko-KR', priceFormatter: (p: number) => formatPrice(p, marketRef.current) },
     })
     const candles = chart.addSeries(CandlestickSeries, {
       upColor: UP,
@@ -173,10 +172,12 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     const prim = new DrawingsPrimitive(
       () => candlesRef.current,
       () => intervalRef.current,
-      formatPrice,
+      (p) => formatPrice(p, marketRef.current),
     )
     candles.attachPrimitive(prim)
-    primRef.current = prim    // Drawing: first click places the start point, second click finishes.
+    primRef.current = prim
+
+    // Drawing: first click places the start point, second click finishes.
     // We listen to raw pointer events because the chart's own click event drops
     // a second click that lands inside its double-click window.
     const onPoint = (x: number, y: number) => {
@@ -313,6 +314,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         }
       }
       const bars = candlesRef.current
+      hoveringRef.current = param.time !== undefined
       if (!bars.length) return
       let bar = bars[bars.length - 1]
       if (param.time !== undefined) {
@@ -392,7 +394,10 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     let nextPane = 1
     const built = ordered.map((d) => buildIndicator(d.id, chart, d.pane === 'overlay' ? 0 : nextPane++, precision))
     const panes = chart.panes()
-    for (let i = 1; i < panes.length; i++) panes[i].setHeight(110)
+    // Relative sizes (not pixels) so the split survives window resizes:
+    // price pane ≈ 4 parts, each indicator pane 1 part.
+    panes[0]?.setStretchFactor(4)
+    for (let i = 1; i < panes.length; i++) panes[i].setStretchFactor(1)
 
     groupsRef.current = built
     setGroups(built)
@@ -433,6 +438,8 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       volumeSeries.update(volBar(last))
       groupsRef.current.forEach((g) => g.render(bars, !newBar))
       newBar = false
+      // Keep the OHLC legend on the live candle unless the user is hovering another bar.
+      if (!hoveringRef.current) setLegend({ ...last })
     }
     const scheduleRender = (isNewBar: boolean) => {
       newBar ||= isNewBar
@@ -443,11 +450,13 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     candlesRef.current = []
     renderAll()
 
-    fetchCandles(market, interval)
+    const source = sourceOf(market)
+    source
+      .fetchCandles(market, interval)
       .then((bars) => {
         if (cancelled) return
         candlesRef.current = bars
-        const precision = pricePrecision(bars[bars.length - 1]?.close ?? 1)
+        const precision = priceDecimals(market, bars[bars.length - 1]?.close ?? 1)
         candleSeries.applyOptions({
           priceFormat: { type: 'price', precision, minMove: 1 / 10 ** precision },
         })
@@ -465,7 +474,8 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       const bars = candlesRef.current
       if (!bars.length) return
       loadingMore = true
-      fetchCandles(market, interval, bars[0].time)
+      source
+        .fetchCandles(market, interval, bars[0].time)
         .then((older) => {
           if (cancelled) return
           const fresh = older.filter((c) => c.time < bars[0].time)
@@ -492,10 +502,10 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRange)
 
     // Real-time trades build / extend the latest candle.
-    const unsubscribe = subscribe<Trade>('trade', [market], (t) => {
+    const unsubscribe = source.subscribeTrades(market, (t) => {
       const bars = candlesRef.current
       if (cancelled || !bars.length || t.code !== market) return
-      const start = bucketStart(t.trade_timestamp, interval)
+      const start = bucketStart(t.trade_timestamp, interval, source.candleTzOffset)
       const last = bars[bars.length - 1]
       if (start < last.time) return
       if (start > last.time) {
@@ -580,10 +590,10 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       <div className="chart-legend">
         {legend && (
           <>
-            <span>시 <b className={up ? 'up' : 'down'}>{formatPrice(legend.open)}</b></span>
-            <span>고 <b className={up ? 'up' : 'down'}>{formatPrice(legend.high)}</b></span>
-            <span>저 <b className={up ? 'up' : 'down'}>{formatPrice(legend.low)}</b></span>
-            <span>종 <b className={up ? 'up' : 'down'}>{formatPrice(legend.close)}</b></span>
+            <span>시 <b className={up ? 'up' : 'down'}>{formatPrice(legend.open, market)}</b></span>
+            <span>고 <b className={up ? 'up' : 'down'}>{formatPrice(legend.high, market)}</b></span>
+            <span>저 <b className={up ? 'up' : 'down'}>{formatPrice(legend.low, market)}</b></span>
+            <span>종 <b className={up ? 'up' : 'down'}>{formatPrice(legend.close, market)}</b></span>
             <span>거래량 <b>{legend.volume.toLocaleString('ko-KR', { maximumFractionDigits: 3 })}</b></span>
           </>
         )}

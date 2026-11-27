@@ -16,7 +16,7 @@ import type {
   SeriesType,
   Time,
 } from 'lightweight-charts'
-import type { Candle, Interval } from './bithumb'
+import type { Candle, Interval } from './market'
 
 export type DrawingType = 'trend' | 'ray' | 'hline' | 'fib' | 'rect'
 /** 'alert' is not a drawing: clicking the chart creates a price alert at that price. */

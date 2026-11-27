@@ -6,7 +6,7 @@ import {
   type NotifyPermission,
   type PriceAlert,
 } from '../lib/alerts'
-import { formatPrice, type Ticker } from '../lib/bithumb'
+import { formatPrice, pairLabel, priceDecimals, priceUnit, quoteOf, type Ticker } from '../lib/market'
 
 interface Props {
   market: string
@@ -75,11 +75,11 @@ export default function AlertPanel(p: Props) {
 
       <section className="ap-new">
         <div className="ap-sym">
-          {p.marketName} <small>{p.market.replace('KRW-', '')}/KRW</small>
-          <span className="ap-cur">현재가 {current !== undefined ? formatPrice(current) : '-'}</span>
+          {p.marketName} <small>{pairLabel(p.market)}</small>
+          <span className="ap-cur">현재가 {current !== undefined ? formatPrice(current, p.market) : '-'}</span>
         </div>
         <label className="ap-field">
-          <span>목표가 (원)</span>
+          <span>목표가 ({quoteOf(p.market) === 'KRW' ? '원' : 'USDT'})</span>
           <input
             inputMode="decimal"
             value={priceText}
@@ -94,7 +94,7 @@ export default function AlertPanel(p: Props) {
               key={q}
               className="tb-btn"
               disabled={current === undefined}
-              onClick={() => setPriceText(String(+(current! * (1 + q / 100)).toPrecision(8)))}
+              onClick={() => setPriceText(String(+(current! * (1 + q / 100)).toFixed(priceDecimals(p.market, current!))))}
             >
               {q > 0 ? '+' : ''}
               {q}%
@@ -111,10 +111,10 @@ export default function AlertPanel(p: Props) {
         />
         <div className="ap-preview">
           {dir === 'above' && (
-            <span className="up">▲ {formatPrice(price)}원 이상으로 오르면 알림 ({diff >= 0 ? '+' : ''}{diff.toFixed(2)}%)</span>
+            <span className="up">▲ {formatPrice(price, p.market)}{priceUnit(p.market)} 이상으로 오르면 알림 ({diff >= 0 ? '+' : ''}{diff.toFixed(2)}%)</span>
           )}
           {dir === 'below' && (
-            <span className="down">▼ {formatPrice(price)}원 이하로 내리면 알림 ({diff.toFixed(2)}%)</span>
+            <span className="down">▼ {formatPrice(price, p.market)}{priceUnit(p.market)} 이하로 내리면 알림 ({diff.toFixed(2)}%)</span>
           )}
           {!dir && <span>목표가를 입력하세요</span>}
         </div>
@@ -142,7 +142,7 @@ export default function AlertPanel(p: Props) {
               <li key={a.id} onClick={() => p.onOpenMarket(a.market)} title="이 종목 차트 보기">
                 <span className={a.direction === 'above' ? 'up' : 'down'}>{a.direction === 'above' ? '▲' : '▼'}</span>
                 <div className="ap-item">
-                  <b>{p.nameOf(a.market)}</b> {formatPrice(a.price)}
+                  <b>{p.nameOf(a.market)}</b> {formatPrice(a.price, a.market)}
                   {a.note && <small>{a.note}</small>}
                 </div>
                 <span className="ap-gap">{gap === null ? '' : `${gap >= 0 ? '+' : ''}${gap.toFixed(2)}%`}</span>
@@ -175,9 +175,9 @@ export default function AlertPanel(p: Props) {
               <li key={a.id} onClick={() => p.onOpenMarket(a.market)}>
                 <span className={a.direction === 'above' ? 'up' : 'down'}>{a.direction === 'above' ? '▲' : '▼'}</span>
                 <div className="ap-item">
-                  <b>{p.nameOf(a.market)}</b> {formatPrice(a.price)}
+                  <b>{p.nameOf(a.market)}</b> {formatPrice(a.price, a.market)}
                   <small>
-                    {timeText(a.triggeredAt!)} · {formatPrice(a.triggeredPrice!)}원 도달
+                    {timeText(a.triggeredAt!)} · {formatPrice(a.triggeredPrice!, a.market)}{priceUnit(a.market)} 도달
                   </small>
                 </div>
               </li>

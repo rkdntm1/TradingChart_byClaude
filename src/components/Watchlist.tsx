@@ -1,5 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { formatPrice, formatVolumeKrw, type Market, type Ticker } from '../lib/bithumb'
+import { formatPrice, formatVolume, pairLabel, SOURCES, sourceOf, type Market, type SourceId, type Ticker } from '../lib/market'
+
+type Tab = SourceId | 'fav'
 
 const FAV_KEY = 'chartview:favorites'
 
@@ -20,7 +22,7 @@ interface Props {
 
 export default function Watchlist({ markets, tickers, selected, onSelect }: Props) {
   const [query, setQuery] = useState('')
-  const [tab, setTab] = useState<'all' | 'fav'>('all')
+  const [tab, setTab] = useState<Tab>(() => sourceOf(selected).id)
   const [favorites, setFavorites] = useState<string[]>(loadFavorites)
 
   useEffect(() => {
@@ -31,28 +33,37 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
     }
   }, [favorites])
 
+  // Follow the selected market across exchanges (e.g. opened from an alert), unless on favorites.
+  useEffect(() => {
+    setTab((t) => (t === 'fav' ? t : sourceOf(selected).id))
+  }, [selected])
+
   const toggleFav = (code: string) =>
     setFavorites((f) => (f.includes(code) ? f.filter((c) => c !== code) : [...f, code]))
 
   // Order by 24h trade value; re-sorting every tick would make rows jump, so only
-  // re-sort when the market list, tab or query changes.
+  // re-sort when the market list, tab, query or the first tickers change.
   const tickersRef = useRef(tickers)
   tickersRef.current = tickers
-  const hasTickers = Object.keys(tickers).length > 0
+  const tickerCount = Object.keys(tickers).length
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase()
     const t = tickersRef.current
+    const matches = (m: Market) =>
+      !q ||
+      m.korean_name.toLowerCase().includes(q) ||
+      m.english_name.toLowerCase().includes(q) ||
+      m.market.toLowerCase().includes(q)
+    if (tab === 'fav') {
+      // Favorites mix KRW and USDT, so keep the order they were added in.
+      const byCode = new Map(markets.map((m) => [m.market, m]))
+      return favorites.map((c) => byCode.get(c)).filter((m): m is Market => !!m && matches(m))
+    }
     return markets
-      .filter((m) => tab === 'all' || favorites.includes(m.market))
-      .filter(
-        (m) =>
-          !q ||
-          m.korean_name.toLowerCase().includes(q) ||
-          m.english_name.toLowerCase().includes(q) ||
-          m.market.toLowerCase().includes(q),
-      )
+      .filter((m) => m.source === tab && matches(m))
       .sort((a, b) => (t[b.market]?.acc_trade_price_24h ?? 0) - (t[a.market]?.acc_trade_price_24h ?? 0))
-  }, [markets, tab, favorites, query, hasTickers])
+    // tickerCount: re-sort once each source's first tickers arrive
+  }, [markets, tab, favorites, query, tickerCount > 0, Math.floor(tickerCount / 100)])
 
   return (
     <aside className="side">
@@ -64,11 +75,13 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
           onChange={(e) => setQuery(e.target.value)}
         />
         <div className="tabs">
-          <button className={`tb-btn ${tab === 'all' ? 'on' : ''}`} onClick={() => setTab('all')}>
-            원화 마켓
-          </button>
+          {SOURCES.map((s) => (
+            <button key={s.id} className={`tb-btn ${tab === s.id ? 'on' : ''}`} onClick={() => setTab(s.id)}>
+              {s.label}
+            </button>
+          ))}
           <button className={`tb-btn ${tab === 'fav' ? 'on' : ''}`} onClick={() => setTab('fav')}>
-            관심종목 {favorites.length}
+            관심 {favorites.length}
           </button>
         </div>
       </div>
@@ -76,7 +89,7 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
         <i />
         <i>종목</i>
         <span>현재가</span>
-        <span>전일대비</span>
+        <span>{tab === 'bithumb' ? '전일대비' : '24h'}</span>
         <span>거래대금</span>
       </div>
       <div className="list">
@@ -94,7 +107,7 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
         {!rows.length && <div className="empty">{markets.length ? '검색 결과가 없습니다' : '불러오는 중…'}</div>}
       </div>
       <div className="foot">
-        시세: 빗썸 공개 API · 차트:{' '}
+        시세: 빗썸 · 바이낸스 공개 API · 차트:{' '}
         <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
           TradingView Lightweight Charts
         </a>
@@ -142,13 +155,13 @@ const Row = memo(function Row({ market, ticker, selected, favorite, onSelect, on
       </button>
       <div className="name">
         <b>{market.korean_name}</b>
-        <small>{market.market.replace('KRW-', '')}/KRW</small>
+        <small>{pairLabel(market.market)}</small>
       </div>
-      <span className={`num ${cls} ${flash}`}>{ticker ? formatPrice(ticker.trade_price) : '-'}</span>
+      <span className={`num ${cls} ${flash}`}>{ticker ? formatPrice(ticker.trade_price, market.market) : '-'}</span>
       <span className={`num ${cls}`}>
         {ticker ? `${ticker.signed_change_rate > 0 ? '+' : ''}${(ticker.signed_change_rate * 100).toFixed(2)}%` : '-'}
       </span>
-      <span className="num vol">{ticker ? formatVolumeKrw(ticker.acc_trade_price_24h) : '-'}</span>
+      <span className="num vol">{ticker ? formatVolume(ticker.acc_trade_price_24h, market.market) : '-'}</span>
     </div>
   )
 })

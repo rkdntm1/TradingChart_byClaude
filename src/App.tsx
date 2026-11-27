@@ -6,7 +6,7 @@ import { useAlerts } from './hooks/useAlerts'
 import { INDICATORS, type IndicatorId } from './lib/chartIndicators'
 import Watchlist from './components/Watchlist'
 import { useMarketData } from './hooks/useMarketData'
-import { formatPrice, formatVolumeKrw, INTERVALS, pricePrecision, type Interval } from './lib/bithumb'
+import { baseOf, formatPrice, formatVolume, INTERVALS, pairLabel, priceDecimals, type Interval } from './lib/market'
 import './App.css'
 
 function usePersisted<T extends string>(key: string, initial: T) {
@@ -43,7 +43,7 @@ export default function App() {
   const { markets, tickers } = useMarketData()
 
   const nameOf = useCallback(
-    (code: string) => markets.find((m) => m.market === code)?.korean_name ?? code.replace('KRW-', ''),
+    (code: string) => markets.find((m) => m.market === code)?.korean_name ?? baseOf(code),
     [markets],
   )
   const { active, history, addAlert, removeAlert, clearHistory, toasts, dismissToast } = useAlerts(
@@ -61,7 +61,7 @@ export default function App() {
     (price: number) => {
       const cur = tickers[market]?.trade_price
       // Chart clicks give arbitrary decimals; round to the coin's price precision.
-      if (cur !== undefined) addAlert(market, +price.toFixed(pricePrecision(cur)), cur)
+      if (cur !== undefined) addAlert(market, +price.toFixed(priceDecimals(market, cur)), cur)
     },
     [tickers, market, addAlert],
   )
@@ -72,7 +72,7 @@ export default function App() {
   const sign = t && t.signed_change_price > 0 ? '+' : ''
 
   useEffect(() => {
-    document.title = t ? `${formatPrice(t.trade_price)} ${market.replace('KRW-', '')} · ChartView` : 'ChartView'
+    document.title = t ? `${formatPrice(t.trade_price, market)} ${pairLabel(market)} · ChartView` : 'ChartView'
   }, [t, market])
 
   return (
@@ -84,14 +84,14 @@ export default function App() {
         </div>
         <div className="symbol">
           <span className="symbol-name">{info?.korean_name ?? market}</span>
-          <span className="symbol-code">{market.replace('KRW-', '')}/KRW</span>
+          <span className="symbol-code">{pairLabel(market)}</span>
           {t && (
             <>
-              <span className={`symbol-price ${cls}`}>{formatPrice(t.trade_price)}</span>
+              <span className={`symbol-price ${cls}`}>{formatPrice(t.trade_price, market)}</span>
               <span className={`symbol-change ${cls}`}>
                 {sign}
                 {(t.signed_change_rate * 100).toFixed(2)}% {sign}
-                {formatPrice(t.signed_change_price)}
+                {formatPrice(t.signed_change_price, market)}
               </span>
             </>
           )}
@@ -100,13 +100,13 @@ export default function App() {
           {t && (
             <div className="stats">
               <div>
-                고가<b className="up">{formatPrice(t.high_price)}</b>
+                고가<b className="up">{formatPrice(t.high_price, market)}</b>
               </div>
               <div>
-                저가<b className="down">{formatPrice(t.low_price)}</b>
+                저가<b className="down">{formatPrice(t.low_price, market)}</b>
               </div>
               <div>
-                거래대금(24H)<b>{formatVolumeKrw(t.acc_trade_price_24h)}</b>
+                거래대금(24H)<b>{formatVolume(t.acc_trade_price_24h, market)}</b>
               </div>
             </div>
           )}

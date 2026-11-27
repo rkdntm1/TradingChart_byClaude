@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { AlertToast } from '../hooks/useAlerts'
-import { formatPrice } from '../lib/bithumb'
+import { formatPrice } from '../lib/market'
 
 interface Props {
   toasts: AlertToast[]
@@ -31,7 +31,7 @@ function Toast({ toast, onDismiss, onOpen }: { toast: AlertToast; onDismiss: (id
         🔔 {toast.name} <span className={up ? 'up' : 'down'}>{up ? '▲ 상승 돌파' : '▼ 하락 돌파'}</span>
       </div>
       <div className="toast-body">
-        목표가 {formatPrice(a.price)} · 현재가 {formatPrice(a.triggeredPrice!)}
+        목표가 {formatPrice(a.price, a.market)} · 현재가 {formatPrice(a.triggeredPrice!, a.market)}
         {a.note && <div className="toast-note">{a.note}</div>}
       </div>
       <button

@@ -9,7 +9,7 @@ import {
   unlockSound,
   type PriceAlert,
 } from '../lib/alerts'
-import { formatPrice, type Ticker } from '../lib/bithumb'
+import { formatPrice, priceUnit, type Ticker } from '../lib/market'
 
 export interface AlertToast {
   id: string
@@ -19,7 +19,7 @@ export interface AlertToast {
 
 /**
  * Price alerts checked against the live ticker stream (which already covers
- * every KRW market), so alerts fire for any coin, not just the one on screen.
+ * every market on every source), so alerts fire for any coin, not just the one on screen.
  */
 export function useAlerts(
   tickers: Record<string, Ticker>,
@@ -50,7 +50,7 @@ export function useAlerts(
       const arrow = a.direction === 'above' ? '▲ 상승 돌파' : '▼ 하락 돌파'
       showSystemNotification(
         `${nameOf(a.market)} ${arrow}`,
-        `목표가 ${formatPrice(a.price)}원 · 현재가 ${formatPrice(a.triggeredPrice!)}원${a.note ? `\n${a.note}` : ''}`,
+        `목표가 ${formatPrice(a.price, a.market)}${priceUnit(a.market)} · 현재가 ${formatPrice(a.triggeredPrice!, a.market)}${priceUnit(a.market)}${a.note ? `\n${a.note}` : ''}`,
         () => onOpenMarket(a.market),
       )
     }
