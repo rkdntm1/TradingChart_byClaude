@@ -125,11 +125,126 @@ function requireProxy(): string {
 }
 
 async function fetchSnapshots(markets: Market[]): Promise<Ticker[]> {
+  if (!markets.length) return []
   const symbols = markets.map((m) => symbolOf(m.market)).join(',')
   const data = await getJson<Record<string, Snapshot>>(`${requireProxy()}/snapshots?symbols=${encodeURIComponent(symbols)}`)
   return Object.entries(data)
     .map(([sym, s]) => toTicker(code(sym), s))
     .filter((t): t is Ticker => t !== null)
+}
+
+// ---- user-added stocks (search) ----
+
+const EXTRA_KEY = 'chartview:us-extra'
+/** Snapshot requests take at most 100 symbols, and 41 are built in. */
+export const MAX_EXTRA_US = 100 - STOCKS.length
+
+interface Extra {
+  symbol: string
+  name: string
+}
+
+function loadExtras(): Extra[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(EXTRA_KEY) ?? '[]')
+    return Array.isArray(raw) ? raw.filter((e) => typeof e?.symbol === 'string' && typeof e?.name === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function saveExtras(extras: Extra[]) {
+  try {
+    localStorage.setItem(EXTRA_KEY, JSON.stringify(extras))
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** "Rivian Automotive, Inc. Class A Common Stock" → "Rivian Automotive, Inc. Class A". */
+export const cleanName = (name: string) =>
+  name
+    .replace(/\s+(Common Stock|Common Shares|Ordinary Shares|American Depositary Shares.*|ADS.*)$/i, '')
+    .trim()
+
+const BUILT_IN = new Set(STOCKS.map(([s]) => s))
+
+const extraMarket = ({ symbol, name }: Extra): Market => ({
+  market: code(symbol),
+  source: 'us',
+  base: symbol,
+  quote: 'USD',
+  korean_name: cleanName(name), // no Korean name available: show the English one
+  english_name: name,
+})
+
+/** Whether a US market was added by the user (and can be removed). */
+export const isUserAddedUs = (market: string) => market.startsWith('US-') && !BUILT_IN.has(symbolOf(market))
+
+/** Symbols currently polled for the market list; edited when stocks are added/removed. */
+const watched = new Map<string, Market>()
+
+/** Add a stock to the US list (persisted). Returns its market, or null if the list is full. */
+export function addUsStock(symbol: string, name: string): Market | null {
+  const extras = loadExtras()
+  if (BUILT_IN.has(symbol) || extras.some((e) => e.symbol === symbol)) return extraOrBuiltIn(symbol, extras)
+  if (extras.length >= MAX_EXTRA_US) return null
+  const extra = { symbol, name }
+  saveExtras([...extras, extra])
+  const m = extraMarket(extra)
+  watched.set(m.market, m)
+  return m
+}
+
+function extraOrBuiltIn(symbol: string, extras: Extra[]): Market | null {
+  const e = extras.find((x) => x.symbol === symbol)
+  return e ? extraMarket(e) : (watched.get(code(symbol)) ?? null)
+}
+
+export function removeUsStock(market: string) {
+  if (!isUserAddedUs(market)) return
+  saveExtras(loadExtras().filter((e) => e.symbol !== symbolOf(market)))
+  watched.delete(market)
+}
+
+// ---- searching every listed US stock ----
+
+let assetsPromise: Promise<[string, string][]> | null = null
+
+/** All active, tradable US-listed stocks/ETFs ([symbol, name]); downloaded once, on first search. */
+function loadAssets() {
+  assetsPromise ??= getJson<[string, string][]>(`${requireProxy()}/assets`).catch((err) => {
+    assetsPromise = null // allow a retry on the next search
+    throw err
+  })
+  return assetsPromise
+}
+
+export interface UsAsset {
+  symbol: string
+  name: string
+}
+
+/**
+ * Search all US stocks by symbol or English name. Exact symbol first, then
+ * symbols starting with the query, then names containing it.
+ */
+export async function searchUsAssets(query: string, limit = 20): Promise<UsAsset[]> {
+  const q = query.trim()
+  if (!q) return []
+  const assets = await loadAssets()
+  const up = q.toUpperCase()
+  const low = q.toLowerCase()
+  const exact: UsAsset[] = []
+  const prefix: UsAsset[] = []
+  const named: UsAsset[] = []
+  for (const [symbol, name] of assets) {
+    if (symbol === up) exact.push({ symbol, name })
+    else if (symbol.startsWith(up)) prefix.push({ symbol, name })
+    else if (name.toLowerCase().includes(low)) named.push({ symbol, name })
+  }
+  prefix.sort((a, b) => a.symbol.length - b.symbol.length || a.symbol.localeCompare(b.symbol))
+  return [...exact, ...prefix, ...named].slice(0, limit)
 }
 
 async function fetchBars(market: string, interval: Interval, toUtcSec?: number): Promise<Candle[]> {
@@ -167,21 +282,24 @@ export const usStocks: DataSource = {
 
   async fetchMarkets() {
     requireProxy()
-    return STOCKS.map(([symbol, korean, english]) => ({
+    const builtIn: Market[] = STOCKS.map(([symbol, korean, english]) => ({
       market: code(symbol),
-      source: 'us' as const,
+      source: 'us',
       base: symbol,
-      quote: 'USD' as const,
+      quote: 'USD',
       korean_name: korean,
       english_name: english,
     }))
+    return [...builtIn, ...loadExtras().filter((e) => !BUILT_IN.has(e.symbol)).map(extraMarket)]
   },
 
   fetchTickers: fetchSnapshots,
 
   subscribeTickers(markets, onTicker) {
+    for (const m of markets) watched.set(m.market, m)
+    // Poll whatever is watched right now, so stocks added later are included.
     return poll(async () => {
-      for (const t of await fetchSnapshots(markets)) onTicker(t)
+      for (const t of await fetchSnapshots([...watched.values()])) onTicker(t)
     }, SNAPSHOT_POLL_MS)
   },
 

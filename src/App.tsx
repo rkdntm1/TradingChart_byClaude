@@ -40,7 +40,7 @@ export default function App() {
       const cur = prev.split(',').filter(Boolean)
       return (cur.includes(id) ? cur.filter((i) => i !== id) : [...cur, id]).join(',')
     })
-  const { markets, tickers } = useMarketData()
+  const { markets, tickers, addUsMarket, removeUsMarket } = useMarketData()
 
   const nameOf = useCallback(
     (code: string) => markets.find((m) => m.market === code)?.korean_name ?? baseOf(code),
@@ -171,7 +171,17 @@ export default function App() {
         />
       </main>
 
-      <Watchlist markets={markets} tickers={tickers} selected={market} onSelect={setMarket} />
+      <Watchlist
+        markets={markets}
+        tickers={tickers}
+        selected={market}
+        onSelect={setMarket}
+        onAddUs={(symbol, name) => addUsMarket(symbol, name)?.market ?? null}
+        onRemoveUs={(code) => {
+          removeUsMarket(code)
+          if (code === market) setMarket('US-AAPL')
+        }}
+      />
     </div>
   )
 }

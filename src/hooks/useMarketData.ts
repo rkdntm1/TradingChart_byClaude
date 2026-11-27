@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
-import { registerMarkets, SOURCES, type Market, type SourceId, type Ticker } from '../lib/market'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  addUsStock,
+  registerMarkets,
+  removeUsStock,
+  sourceOf,
+  SOURCES,
+  type Market,
+  type SourceId,
+  type Ticker,
+} from '../lib/market'
 
 /**
  * Markets and live 24h tickers from every data source (Bithumb KRW + Binance
@@ -62,5 +71,24 @@ export function useMarketData() {
     return [...(bySource.bithumb ?? []), ...binance, ...(bySource.us ?? [])]
   }, [bySource])
 
-  return { markets, tickers }
+  /** Add a searched US stock to the list. Returns null when the list is full. */
+  const addUsMarket = useCallback((symbol: string, name: string): Market | null => {
+    const m = addUsStock(symbol, name)
+    if (!m) return null
+    registerMarkets([m])
+    setBySource((prev) => (prev.us?.some((x) => x.market === m.market) ? prev : { ...prev, us: [...(prev.us ?? []), m] }))
+    // Show its price right away instead of waiting for the next poll.
+    sourceOf(m.market)
+      .fetchTickers([m])
+      .then((ts) => setTickers((prev) => ({ ...prev, ...Object.fromEntries(ts.map((t) => [t.code, t])) })))
+      .catch(() => {})
+    return m
+  }, [])
+
+  const removeUsMarket = useCallback((code: string) => {
+    removeUsStock(code)
+    setBySource((prev) => ({ ...prev, us: (prev.us ?? []).filter((m) => m.market !== code) }))
+  }, [])
+
+  return { markets, tickers, addUsMarket, removeUsMarket }
 }

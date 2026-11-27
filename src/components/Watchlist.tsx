@@ -1,5 +1,19 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { formatPrice, formatVolume, pairLabel, SOURCES, sourceOf, type Market, type SourceId, type Ticker } from '../lib/market'
+import {
+  cleanName,
+  formatPrice,
+  formatVolume,
+  isUserAddedUs,
+  MAX_EXTRA_US,
+  pairLabel,
+  searchUsAssets,
+  SOURCES,
+  sourceOf,
+  type Market,
+  type SourceId,
+  type Ticker,
+  type UsAsset,
+} from '../lib/market'
 
 type Tab = SourceId | 'fav'
 
@@ -18,9 +32,12 @@ interface Props {
   tickers: Record<string, Ticker>
   selected: string
   onSelect: (market: string) => void
+  /** Add a searched US stock; returns its market code, or null when the list is full. */
+  onAddUs: (symbol: string, name: string) => string | null
+  onRemoveUs: (market: string) => void
 }
 
-export default function Watchlist({ markets, tickers, selected, onSelect }: Props) {
+export default function Watchlist({ markets, tickers, selected, onSelect, onAddUs, onRemoveUs }: Props) {
   const [query, setQuery] = useState('')
   const [tab, setTab] = useState<Tab>(() => sourceOf(selected).id)
   const [favorites, setFavorites] = useState<string[]>(loadFavorites)
@@ -102,9 +119,25 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
             favorite={favorites.includes(m.market)}
             onSelect={onSelect}
             onToggleFav={toggleFav}
+            onRemove={isUserAddedUs(m.market) ? onRemoveUs : undefined}
           />
         ))}
-        {!rows.length && <div className="empty">{markets.length ? '검색 결과가 없습니다' : '불러오는 중…'}</div>}
+        {tab === 'us' && query.trim() ? (
+          <UsSearch
+            query={query}
+            listed={new Set(markets.filter((m) => m.source === 'us').map((m) => m.market))}
+            onAdd={(a) => {
+              const code = onAddUs(a.symbol, a.name)
+              if (code) {
+                onSelect(code)
+                setQuery('')
+              }
+              return code !== null
+            }}
+          />
+        ) : (
+          !rows.length && <div className="empty">{markets.length ? '검색 결과가 없습니다' : '불러오는 중…'}</div>
+        )}
       </div>
       <div className="foot">
         시세: 빗썸 · 바이낸스 · Alpaca(IEX) · 차트:{' '}
@@ -123,9 +156,11 @@ interface RowProps {
   favorite: boolean
   onSelect: (market: string) => void
   onToggleFav: (market: string) => void
+  /** Present for user-added US stocks: removes the row from the list. */
+  onRemove?: (market: string) => void
 }
 
-const Row = memo(function Row({ market, ticker, selected, favorite, onSelect, onToggleFav }: RowProps) {
+const Row = memo(function Row({ market, ticker, selected, favorite, onSelect, onToggleFav, onRemove }: RowProps) {
   const prev = useRef(ticker?.trade_price)
   const [flash, setFlash] = useState('')
 
@@ -155,7 +190,22 @@ const Row = memo(function Row({ market, ticker, selected, favorite, onSelect, on
       </button>
       <div className="name">
         <b>{market.korean_name}</b>
-        <small>{pairLabel(market.market)}</small>
+        <small>
+          {pairLabel(market.market)}
+          {onRemove && (
+            <button
+              className="row-rm"
+              title="목록에서 빼기"
+              aria-label={`${market.base} 목록에서 빼기`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onRemove(market.market)
+              }}
+            >
+              빼기
+            </button>
+          )}
+        </small>
       </div>
       <span className={`num ${cls} ${flash}`}>{ticker ? formatPrice(ticker.trade_price, market.market) : '-'}</span>
       <span className={`num ${cls}`}>
@@ -165,3 +215,43 @@ const Row = memo(function Row({ market, ticker, selected, favorite, onSelect, on
     </div>
   )
 })
+
+/** Search every listed US stock (downloaded on first use) and add one to the list. */
+function UsSearch({ query, listed, onAdd }: { query: string; listed: Set<string>; onAdd: (a: UsAsset) => boolean }) {
+  const [results, setResults] = useState<UsAsset[] | null>(null)
+  const [error, setError] = useState(false)
+  const [full, setFull] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setError(false)
+    // Debounce typing a little; the first call also downloads the symbol list.
+    const id = setTimeout(() => {
+      searchUsAssets(query)
+        .then((r) => !cancelled && setResults(r))
+        .catch(() => !cancelled && setError(true))
+    }, 200)
+    return () => {
+      cancelled = true
+      clearTimeout(id)
+    }
+  }, [query])
+
+  const others = (results ?? []).filter((a) => !listed.has(`US-${a.symbol}`))
+  return (
+    <div className="us-search">
+      <div className="us-search-head">미국 전체 종목에서 찾기</div>
+      {error && <div className="empty">종목 목록을 불러오지 못했습니다</div>}
+      {!error && results === null && <div className="empty">종목 목록 불러오는 중…</div>}
+      {!error && results !== null && !others.length && <div className="empty">추가할 종목이 없습니다</div>}
+      {full && <div className="empty">목록이 가득 찼습니다 (최대 {MAX_EXTRA_US}개). 추가한 종목을 빼고 다시 시도하세요.</div>}
+      {others.map((a) => (
+        <button key={a.symbol} className="us-result" onClick={() => setFull(!onAdd(a))} title={a.name}>
+          <b>{a.symbol}</b>
+          <span>{cleanName(a.name)}</span>
+          <em>+ 추가</em>
+        </button>
+      ))}
+    </div>
+  )
+}

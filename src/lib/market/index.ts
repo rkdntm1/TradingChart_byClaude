@@ -5,6 +5,16 @@
 import { binance } from './binance'
 import { bithumb } from './bithumb'
 import { usStocks, usStocksEnabled } from './usstocks'
+export {
+  addUsStock,
+  cleanName,
+  isUserAddedUs,
+  MAX_EXTRA_US,
+  removeUsStock,
+  searchUsAssets,
+  usStocksEnabled,
+  type UsAsset,
+} from './usstocks'
 import type { DataSource } from './types'
 
 /** Sources shown in the app. US stocks appear only when a Worker URL is configured. */

@@ -9,8 +9,12 @@
 // Routes (GET only, allowed origins only):
 //   /snapshots?symbols=AAPL,MSFT        latest trade + daily bars per symbol
 //   /bars?symbol=AAPL&timeframe=15Min[&end=ISO]   latest 200 bars (before `end`)
+//   /assets                             every active, tradable US-listed stock as [symbol, name]
 
 const DATA = 'https://data.alpaca.markets/v2'
+// The asset list lives on the trading API; paper-trading keys use the paper host.
+const TRADING = 'https://paper-api.alpaca.markets/v2'
+const LISTED = new Set(['NASDAQ', 'NYSE', 'ARCA', 'AMEX', 'BATS'])
 const TIMEFRAMES = new Set(['1Min', '5Min', '15Min', '1Hour', '4Hour', '1Day', '1Week'])
 const SYMBOL = /^[A-Z][A-Z.]{0,9}$/
 const MAX_SYMBOLS = 100
@@ -18,7 +22,7 @@ const BARS_LIMIT = 200
 const HISTORY_START = '2016-01-01T00:00:00Z' // free plan history begins 2016
 
 // Seconds to reuse an upstream response.
-const TTL = { snapshots: 10, barsLive: 4, barsHistory: 300 }
+const TTL = { snapshots: 10, barsLive: 4, barsHistory: 300, assets: 12 * 3600 }
 
 // Per-isolate memory cache (the Cache API is unavailable on *.workers.dev).
 const memo = new Map()
@@ -103,6 +107,24 @@ export default {
       if (end) q.set('end', new Date(end).toISOString())
       const r = await upstream(`${DATA}/stocks/${symbol}/bars?${q}`, env, end ? TTL.barsHistory : TTL.barsLive)
       return json(r.status, r.body, headers)
+    }
+
+    if (url.pathname === '/assets') {
+      // ~11k rows upstream; reduce to [symbol, name] for listed, tradable stocks and cache for hours.
+      const key = 'assets:compact'
+      let hit = memo.get(key)
+      if (!hit || hit.expires < Date.now()) {
+        const r = await upstream(`${TRADING}/assets?status=active&asset_class=us_equity`, env, 60)
+        if (r.status !== 200) return json(r.status, r.body, headers)
+        const rows = JSON.parse(r.body)
+          .filter((a) => a.tradable && LISTED.has(a.exchange) && SYMBOL.test(a.symbol))
+          .map((a) => [a.symbol, a.name])
+          .sort((a, b) => a[0].localeCompare(b[0]))
+        memo.delete(`${TRADING}/assets?status=active&asset_class=us_equity`) // keep only the compact copy
+        hit = { status: 200, body: JSON.stringify(rows), expires: Date.now() + TTL.assets * 1000 }
+        memo.set(key, hit)
+      }
+      return json(200, hit.body, { ...headers, 'Cache-Control': 'public, max-age=3600' })
     }
 
     return json(404, { error: 'not found' }, headers)
