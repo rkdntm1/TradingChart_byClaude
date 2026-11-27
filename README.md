@@ -32,6 +32,14 @@ npm run build    # dist/ 에 정적 파일 생성
 
 API 키가 필요 없습니다. 브라우저에서 업비트 API(`api.upbit.com`)를 직접 호출합니다.
 
+## 배포 (GitHub Pages)
+
+`main`에 push하면 GitHub Actions(`.github/workflows/deploy.yml`)가 빌드해서 GitHub Pages에 배포합니다.
+
+- 주소: https://rkdntm1.github.io/TradingChart_byClaude/
+- 최초 1회 설정: 저장소 **Settings → Pages → Build and deployment → Source** 를 **GitHub Actions** 로 선택
+- `vite.config.ts`의 `base: './'` 덕분에 하위 경로에서도 정적 파일이 올바르게 로드됩니다.
+
 ## 구조
 
 ```
