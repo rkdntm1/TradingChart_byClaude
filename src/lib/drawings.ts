@@ -18,8 +18,9 @@ import type {
 } from 'lightweight-charts'
 import type { Candle, Interval } from './upbit'
 
-export type ToolId = 'cursor' | 'trend' | 'ray' | 'hline' | 'fib' | 'rect'
-export type DrawingType = Exclude<ToolId, 'cursor'>
+export type DrawingType = 'trend' | 'ray' | 'hline' | 'fib' | 'rect'
+/** 'alert' is not a drawing: clicking the chart creates a price alert at that price. */
+export type ToolId = 'cursor' | DrawingType | 'alert'
 
 export interface Point {
   time: number // UTC seconds

@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import AlertPanel from './components/AlertPanel'
 import Chart from './components/Chart'
+import Toasts from './components/Toasts'
+import { useAlerts } from './hooks/useAlerts'
 import { INDICATORS, type IndicatorId } from './lib/chartIndicators'
 import Watchlist from './components/Watchlist'
 import { useMarketData } from './hooks/useMarketData'
-import { formatPrice, formatVolumeKrw, INTERVALS, type Interval } from './lib/upbit'
+import { formatPrice, formatVolumeKrw, INTERVALS, pricePrecision, type Interval } from './lib/upbit'
 import './App.css'
 
 function usePersisted<T extends string>(key: string, initial: T) {
@@ -39,6 +42,30 @@ export default function App() {
     })
   const { markets, tickers } = useMarketData()
 
+  const nameOf = useCallback(
+    (code: string) => markets.find((m) => m.market === code)?.korean_name ?? code.replace('KRW-', ''),
+    [markets],
+  )
+  const { active, history, addAlert, removeAlert, clearHistory, toasts, dismissToast } = useAlerts(
+    tickers,
+    nameOf,
+    setMarket,
+  )
+  const [alertsOpen, setAlertsOpen] = useState(false)
+  const closeAlerts = useCallback(() => setAlertsOpen(false), [])
+  const marketAlertPrices = useMemo(
+    () => active.filter((a) => a.market === market).map((a) => a.price),
+    [active, market],
+  )
+  const addAlertAt = useCallback(
+    (price: number) => {
+      const cur = tickers[market]?.trade_price
+      // Chart clicks give arbitrary decimals; round to the coin's price precision.
+      if (cur !== undefined) addAlert(market, +price.toFixed(pricePrecision(cur)), cur)
+    },
+    [tickers, market, addAlert],
+  )
+
   const info = markets.find((m) => m.market === market)
   const t = tickers[market]
   const cls = !t || t.change === 'EVEN' ? '' : t.change === 'RISE' ? 'up' : 'down'
@@ -69,20 +96,53 @@ export default function App() {
             </>
           )}
         </div>
-        {t && (
-          <div className="stats">
-            <div>
-              고가<b className="up">{formatPrice(t.high_price)}</b>
+        <div className="top-right">
+          {t && (
+            <div className="stats">
+              <div>
+                고가<b className="up">{formatPrice(t.high_price)}</b>
+              </div>
+              <div>
+                저가<b className="down">{formatPrice(t.low_price)}</b>
+              </div>
+              <div>
+                거래대금(24H)<b>{formatVolumeKrw(t.acc_trade_price_24h)}</b>
+              </div>
             </div>
-            <div>
-              저가<b className="down">{formatPrice(t.low_price)}</b>
-            </div>
-            <div>
-              거래대금(24H)<b>{formatVolumeKrw(t.acc_trade_price_24h)}</b>
-            </div>
-          </div>
-        )}
+          )}
+          <button
+            className={`bell ${alertsOpen ? 'on' : ''}`}
+            data-alert-toggle
+            aria-label={`가격 알림 (대기 ${active.length}개)`}
+            title="가격 알림"
+            onClick={() => setAlertsOpen((o) => !o)}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+              <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+            </svg>
+            {active.length > 0 && <span className="badge">{active.length}</span>}
+          </button>
+        </div>
       </header>
+      {alertsOpen && (
+        <AlertPanel
+          key={market}
+          market={market}
+          marketName={nameOf(market)}
+          ticker={t}
+          tickers={tickers}
+          active={active}
+          history={history}
+          nameOf={nameOf}
+          onAdd={(price, note) => t && addAlert(market, price, t.trade_price, note)}
+          onRemove={removeAlert}
+          onClearHistory={clearHistory}
+          onOpenMarket={setMarket}
+          onClose={closeAlerts}
+        />
+      )}
+      <Toasts toasts={toasts} onDismiss={dismissToast} onOpen={setMarket} />
 
       <main className="main">
         <div className="toolbar">
@@ -102,7 +162,13 @@ export default function App() {
             </button>
           ))}
         </div>
-        <Chart market={market} interval={interval} indicators={indicators} />
+        <Chart
+          market={market}
+          interval={interval}
+          indicators={indicators}
+          alertPrices={marketAlertPrices}
+          onAlertAt={addAlertAt}
+        />
       </main>
 
       <Watchlist markets={markets} tickers={tickers} selected={market} onSelect={setMarket} />

@@ -5,6 +5,7 @@ import {
   HistogramSeries,
   ColorType,
   CrosshairMode,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
@@ -43,6 +44,10 @@ interface Props {
   market: string
   interval: Interval
   indicators: IndicatorId[]
+  /** Active alert prices for this market, drawn as dashed lines. */
+  alertPrices: number[]
+  /** Called when the user places an alert with the chart's alert tool. */
+  onAlertAt: (price: number) => void
 }
 
 interface Legend {
@@ -53,7 +58,9 @@ interface Legend {
   volume: number
 }
 
-export default function Chart({ market, interval, indicators }: Props) {
+export default function Chart({ market, interval, indicators, alertPrices, onAlertAt }: Props) {
+  const onAlertAtRef = useRef(onAlertAt)
+  onAlertAtRef.current = onAlertAt
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
@@ -183,6 +190,12 @@ export default function Chart({ market, interval, indicators }: Props) {
       }
       const pt = prim.fromXY(x, y)
       if (!pt) return
+      if (current === 'alert') {
+        onAlertAtRef.current?.(pt.price)
+        toolRef.current = 'cursor'
+        setTool('cursor')
+        return
+      }
       if (!prim.draft) {
         prim.draft = { id: crypto.randomUUID(), type: current, points: POINTS_NEEDED[current] === 1 ? [pt] : [pt, pt] }
         if (POINTS_NEEDED[current] > 1) {
@@ -323,6 +336,22 @@ export default function Chart({ market, interval, indicators }: Props) {
       groupsRef.current = []
     }
   }, [])
+
+  // Active price alerts for this market as dashed price lines.
+  useEffect(() => {
+    const series = candleRef.current!
+    const lines = alertPrices.map((price) =>
+      series.createPriceLine({
+        price,
+        color: '#f5b301',
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: '알림',
+      }),
+    )
+    return () => lines.forEach((l) => series.removePriceLine(l))
+  }, [alertPrices])
 
   // Each market keeps its own drawings.
   useEffect(() => {
@@ -503,7 +532,14 @@ export default function Chart({ market, interval, indicators }: Props) {
       <div className={`chart-area ${tool !== 'cursor' ? 'drawing' : ''}`}>
       {tool !== 'cursor' && (
         <div className="draw-hint">
-          {drafting ? '끝 지점을 클릭하세요' : tool === 'hline' ? '가격 위치를 클릭하세요' : '시작 지점을 클릭하세요'} · Esc 취소
+          {drafting
+            ? '끝 지점을 클릭하세요'
+            : tool === 'alert'
+              ? '알림을 받을 가격을 클릭하세요'
+              : tool === 'hline'
+                ? '가격 위치를 클릭하세요'
+                : '시작 지점을 클릭하세요'}{' '}
+          · Esc 취소
         </div>
       )}
       {tool === 'cursor' && selectedDrawing && (

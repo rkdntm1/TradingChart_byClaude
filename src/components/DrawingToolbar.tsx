@@ -60,6 +60,16 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode }[] = [
     label: '사각형',
     icon: icon(<rect x="3" y="4.5" width="12" height="9" rx="1" />),
   },
+  {
+    id: 'alert',
+    label: '가격 알림 추가 (차트에서 가격 클릭)',
+    icon: icon(
+      <>
+        <path d="M4.5 7a4.5 4.5 0 0 1 9 0c0 5 2 6.5 2 6.5h-13s2-1.5 2-6.5" />
+        <path d="M7.7 15.5a1.5 1.5 0 0 0 2.6 0" />
+      </>,
+    ),
+  },
 ]
 
 interface Props {
