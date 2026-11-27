@@ -40,9 +40,14 @@ export function priceDecimals(code: string, price: number): number {
   return Math.min(8, Math.max(2, 4 - Math.floor(Math.log10(price))))
 }
 
-export function formatPrice(p: number | null | undefined, code: string): string {
+/**
+ * Format a price. `ref` is the price that decides the decimal places — pass the
+ * current price when formatting a price *difference* (e.g. +0.90 on a $355 stock
+ * should read "0.90", not "0.9000").
+ */
+export function formatPrice(p: number | null | undefined, code: string, ref?: number): string {
   if (p == null || !Number.isFinite(p)) return '-'
-  const d = priceDecimals(code, p)
+  const d = priceDecimals(code, Math.abs(ref ?? p))
   return p.toLocaleString('ko-KR', { minimumFractionDigits: d, maximumFractionDigits: d })
 }
 

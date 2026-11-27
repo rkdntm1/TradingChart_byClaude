@@ -91,7 +91,7 @@ export default function App() {
               <span className={`symbol-change ${cls}`}>
                 {sign}
                 {(t.signed_change_rate * 100).toFixed(2)}% {sign}
-                {formatPrice(t.signed_change_price, market)}
+                {formatPrice(t.signed_change_price, market, t.trade_price)}
               </span>
             </>
           )}
