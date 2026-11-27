@@ -8,12 +8,14 @@ export type Quote = 'KRW' | 'USDT' | 'USD'
 /** Shift used to render chart times in KST (lightweight-charts works in UTC). */
 export const KST_OFFSET = 9 * 3600
 
-export type Interval = '1m' | '5m' | '15m' | '1h' | '4h' | '1D' | '1W'
+export type Interval = '1m' | '3m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1D' | '1W'
 
 export const INTERVALS: { id: Interval; label: string }[] = [
   { id: '1m', label: '1분' },
+  { id: '3m', label: '3분' },
   { id: '5m', label: '5분' },
   { id: '15m', label: '15분' },
+  { id: '30m', label: '30분' },
   { id: '1h', label: '1시간' },
   { id: '4h', label: '4시간' },
   { id: '1D', label: '일' },
@@ -50,6 +52,8 @@ export interface Ticker {
   acc_trade_price_24h: number // in the quote currency
   high_price: number
   low_price: number
+  /** Time of the last trade (ms), when the source reports it. */
+  timestamp?: number
 }
 
 export interface Trade {
@@ -79,8 +83,10 @@ export interface DataSource {
 
 export const INTERVAL_SEC: Record<Interval, number> = {
   '1m': 60,
+  '3m': 180,
   '5m': 300,
   '15m': 900,
+  '30m': 1800,
   '1h': 3600,
   '4h': 14400,
   '1D': 86400,

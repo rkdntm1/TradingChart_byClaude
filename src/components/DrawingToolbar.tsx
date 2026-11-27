@@ -61,6 +61,16 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode }[] = [
     icon: icon(<rect x="3" y="4.5" width="12" height="9" rx="1" />),
   },
   {
+    id: 'measure',
+    label: '측정 (가격·%·봉 수·기간)',
+    icon: icon(
+      <>
+        <rect x="2.5" y="5.5" width="13" height="7" rx="1" />
+        <path d="M5.5 5.5v2.5M8.5 5.5v3.5M11.5 5.5v2.5" />
+      </>,
+    ),
+  },
+  {
     id: 'alert',
     label: '가격 알림 추가 (차트에서 가격 클릭)',
     icon: icon(
@@ -79,9 +89,11 @@ interface Props {
   onDelete: () => void
   canClear: boolean
   onClear: () => void
+  magnet: boolean
+  onToggleMagnet: () => void
 }
 
-export default function DrawingToolbar({ tool, onTool, canDelete, onDelete, canClear, onClear }: Props) {
+export default function DrawingToolbar({ tool, onTool, canDelete, onDelete, canClear, onClear, magnet, onToggleMagnet }: Props) {
   return (
     <div className="draw-bar">
       {TOOLS.map((t) => (
@@ -96,6 +108,20 @@ export default function DrawingToolbar({ tool, onTool, canDelete, onDelete, canC
         </button>
       ))}
       <span className="draw-sep" />
+      <button
+        className={`draw-btn ${magnet ? 'on' : ''}`}
+        title={magnet ? '자석 켜짐: 시가·고가·저가·종가에 붙음' : '자석 꺼짐'}
+        aria-label="자석 모드"
+        aria-pressed={magnet}
+        onClick={onToggleMagnet}
+      >
+        {icon(
+          <>
+            <path d="M4 3.5v6a5 5 0 0 0 10 0v-6" />
+            <path d="M4 6.5h3M11 6.5h3M7 3.5v6a2 2 0 0 0 4 0v-6" />
+          </>,
+        )}
+      </button>
       <button className="draw-btn" title="선택한 드로잉 삭제 (Delete)" aria-label="선택한 드로잉 삭제" disabled={!canDelete} onClick={onDelete}>
         {icon(<path d="M4.5 4.5l9 9M13.5 4.5l-9 9" />)}
       </button>

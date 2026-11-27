@@ -11,8 +11,10 @@ const WS = 'wss://data-stream.binance.vision/ws'
 
 const KLINE_INTERVAL: Record<Interval, string> = {
   '1m': '1m',
+  '3m': '3m',
   '5m': '5m',
   '15m': '15m',
+  '30m': '30m',
   '1h': '1h',
   '4h': '4h',
   '1D': '1d',

@@ -6,7 +6,17 @@ import { useAlerts } from './hooks/useAlerts'
 import { INDICATORS, type IndicatorId } from './lib/chartIndicators'
 import Watchlist from './components/Watchlist'
 import { useMarketData } from './hooks/useMarketData'
-import { baseOf, formatPrice, formatVolume, INTERVALS, pairLabel, priceDecimals, type Interval } from './lib/market'
+import {
+  baseOf,
+  formatPrice,
+  formatVolume,
+  INTERVALS,
+  pairLabel,
+  priceDecimals,
+  US_SESSION_LABEL,
+  usSession,
+  type Interval,
+} from './lib/market'
 import './App.css'
 
 function usePersisted<T extends string>(key: string, initial: T) {
@@ -71,6 +81,16 @@ export default function App() {
   const cls = !t || t.change === 'EVEN' ? '' : t.change === 'RISE' ? 'up' : 'down'
   const sign = t && t.signed_change_price > 0 ? '+' : ''
 
+  // US stocks: is the market trading right now? A session with no trade in the
+  // last 30 minutes is shown as a holiday (exchange holidays aren't in our clock).
+  const isUs = market.startsWith('US-')
+  const session = isUs ? usSession() : null
+  const staleMs = t?.timestamp ? Date.now() - t.timestamp : null
+  const holiday = session && session !== 'closed' && staleMs !== null && staleMs > 30 * 60 * 1000
+  const lastTrade = t?.timestamp
+    ? new Date(t.timestamp).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : null
+
   useEffect(() => {
     document.title = t ? `${formatPrice(t.trade_price, market)} ${pairLabel(market)} · ChartView` : 'ChartView'
   }, [t, market])
@@ -85,6 +105,15 @@ export default function App() {
         <div className="symbol">
           <span className="symbol-name">{info?.korean_name ?? market}</span>
           <span className="symbol-code">{pairLabel(market)}</span>
+          {session && (
+            <span
+              className={`mkt-status ${holiday ? 'closed' : session}`}
+              title={lastTrade ? `최근 체결 ${lastTrade} (한국 시간)` : undefined}
+            >
+              {holiday ? '휴장·거래 없음' : US_SESSION_LABEL[session]}
+              {lastTrade && <small> · 최근 체결 {lastTrade}</small>}
+            </span>
+          )}
           {t && (
             <>
               <span className={`symbol-price ${cls}`}>{formatPrice(t.trade_price, market)}</span>

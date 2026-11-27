@@ -16,6 +16,12 @@ import {
 } from '../lib/market'
 
 type Tab = SourceId | 'fav'
+type SortKey = 'value' | 'change' | 'price'
+interface Sort {
+  key: SortKey
+  dir: 1 | -1 // 1 = ascending
+}
+const DEFAULT_SORT: Sort = { key: 'value', dir: -1 }
 
 const FAV_KEY = 'chartview:favorites'
 
@@ -41,6 +47,7 @@ export default function Watchlist({ markets, tickers, selected, onSelect, onAddU
   const [query, setQuery] = useState('')
   const [tab, setTab] = useState<Tab>(() => sourceOf(selected).id)
   const [favorites, setFavorites] = useState<string[]>(loadFavorites)
+  const [sort, setSort] = useState<Sort>(DEFAULT_SORT)
 
   useEffect(() => {
     try {
@@ -71,16 +78,36 @@ export default function Watchlist({ markets, tickers, selected, onSelect, onAddU
       m.korean_name.toLowerCase().includes(q) ||
       m.english_name.toLowerCase().includes(q) ||
       m.market.toLowerCase().includes(q)
-    if (tab === 'fav') {
-      // Favorites mix KRW and USDT, so keep the order they were added in.
-      const byCode = new Map(markets.map((m) => [m.market, m]))
-      return favorites.map((c) => byCode.get(c)).filter((m): m is Market => !!m && matches(m))
+    const metric = (m: Market) => {
+      const tk = t[m.market]
+      if (!tk) return null
+      return sort.key === 'change' ? tk.signed_change_rate : sort.key === 'price' ? tk.trade_price : tk.acc_trade_price_24h
     }
-    return markets
-      .filter((m) => m.source === tab && matches(m))
-      .sort((a, b) => (t[b.market]?.acc_trade_price_24h ?? 0) - (t[a.market]?.acc_trade_price_24h ?? 0))
+    const bySort = (a: Market, b: Market) => {
+      const va = metric(a)
+      const vb = metric(b)
+      if (va === null) return vb === null ? 0 : 1 // no data → bottom
+      if (vb === null) return -1
+      return (va - vb) * sort.dir
+    }
+    if (tab === 'fav') {
+      // Favorites mix KRW, USDT and USD, so by default keep the order they were added in.
+      const byCode = new Map(markets.map((m) => [m.market, m]))
+      const favs = favorites.map((c) => byCode.get(c)).filter((m): m is Market => !!m && matches(m))
+      return sort.key === 'value' && sort.dir === -1 ? favs : favs.sort(bySort)
+    }
+    return markets.filter((m) => m.source === tab && matches(m)).sort(bySort)
     // tickerCount: re-sort once each source's first tickers arrive
-  }, [markets, tab, favorites, query, tickerCount > 0, Math.floor(tickerCount / 100)])
+  }, [markets, tab, favorites, query, sort, tickerCount > 0, Math.floor(tickerCount / 100)])
+
+  // Click a column to sort by it (descending first); click again to flip; a third time resets.
+  const onSort = (key: SortKey) =>
+    setSort((cur) => {
+      if (cur.key !== key) return { key, dir: -1 }
+      if (cur.dir === -1) return { key, dir: 1 }
+      return DEFAULT_SORT
+    })
+  const arrow = (key: SortKey) => (sort.key === key ? (sort.dir === -1 ? ' ▼' : ' ▲') : '')
 
   return (
     <aside className="side">
@@ -105,9 +132,16 @@ export default function Watchlist({ markets, tickers, selected, onSelect, onAddU
       <div className="list-head">
         <i />
         <i>종목</i>
-        <span>현재가</span>
-        <span>{tab === 'binance' ? '24h' : '전일대비'}</span>
-        <span>거래대금</span>
+        <button className={`sort-btn ${sort.key === 'price' ? 'on' : ''}`} onClick={() => onSort('price')}>
+          현재가{arrow('price')}
+        </button>
+        <button className={`sort-btn ${sort.key === 'change' ? 'on' : ''}`} onClick={() => onSort('change')}>
+          {tab === 'binance' ? '24h' : '전일대비'}
+          {arrow('change')}
+        </button>
+        <button className={`sort-btn ${sort.key === 'value' ? 'on' : ''}`} onClick={() => onSort('value')}>
+          거래대금{arrow('value')}
+        </button>
       </div>
       <div className="list">
         {rows.map((m) => (

@@ -12,8 +12,11 @@ export {
   MAX_EXTRA_US,
   removeUsStock,
   searchUsAssets,
+  US_SESSION_LABEL,
+  usSession,
   usStocksEnabled,
   type UsAsset,
+  type UsSession,
 } from './usstocks'
 import type { DataSource } from './types'
 

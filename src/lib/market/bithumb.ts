@@ -17,8 +17,10 @@ const TICKER_CHUNK = 100
 
 const CANDLE_PATH: Record<Interval, string> = {
   '1m': 'candles/minutes/1',
+  '3m': 'candles/minutes/3',
   '5m': 'candles/minutes/5',
   '15m': 'candles/minutes/15',
+  '30m': 'candles/minutes/30',
   '1h': 'candles/minutes/60',
   '4h': 'candles/minutes/240',
   '1D': 'candles/days',

@@ -15,7 +15,7 @@ const DATA = 'https://data.alpaca.markets/v2'
 // The asset list lives on the trading API; paper-trading keys use the paper host.
 const TRADING = 'https://paper-api.alpaca.markets/v2'
 const LISTED = new Set(['NASDAQ', 'NYSE', 'ARCA', 'AMEX', 'BATS'])
-const TIMEFRAMES = new Set(['1Min', '5Min', '15Min', '1Hour', '4Hour', '1Day', '1Week'])
+const TIMEFRAMES = new Set(['1Min', '3Min', '5Min', '15Min', '30Min', '1Hour', '4Hour', '1Day', '1Week'])
 const SYMBOL = /^[A-Z][A-Z.]{0,9}$/
 const MAX_SYMBOLS = 100
 const BARS_LIMIT = 200

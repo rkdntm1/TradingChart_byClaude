@@ -16,9 +16,9 @@ import type {
   SeriesType,
   Time,
 } from 'lightweight-charts'
-import type { Candle, Interval } from './market'
+import { INTERVAL_SEC, type Candle, type Interval } from './market'
 
-export type DrawingType = 'trend' | 'ray' | 'hline' | 'fib' | 'rect'
+export type DrawingType = 'trend' | 'ray' | 'hline' | 'fib' | 'rect' | 'measure'
 /** 'alert' is not a drawing: clicking the chart creates a price alert at that price. */
 export type ToolId = 'cursor' | DrawingType | 'alert'
 
@@ -44,21 +44,14 @@ const DEFAULT_COLOR: Record<DrawingType, string> = {
   hline: '#4f8cff',
   fib: '#8a8f98',
   rect: '#a78bfa',
+  measure: '#4f8cff',
 }
 
 export const colorOf = (d: Drawing) => d.color ?? DEFAULT_COLOR[d.type]
 
-export const POINTS_NEEDED: Record<DrawingType, number> = { trend: 2, ray: 2, hline: 1, fib: 2, rect: 2 }
+export const POINTS_NEEDED: Record<DrawingType, number> = { trend: 2, ray: 2, hline: 1, fib: 2, rect: 2, measure: 2 }
 
-export const INTERVAL_SEC: Record<Interval, number> = {
-  '1m': 60,
-  '5m': 300,
-  '15m': 900,
-  '1h': 3600,
-  '4h': 14400,
-  '1D': 86400,
-  '1W': 604800,
-}
+export { INTERVAL_SEC } from './market'
 
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1]
 const FIB_COLORS = ['#8a8f98', '#e8473f', '#ff9800', '#4caf50', '#26a69a', '#3b74f0', '#8a8f98']
@@ -98,9 +91,9 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
   private readonly view: IPrimitivePaneView
   private readonly getBars: () => Candle[]
   private readonly getInterval: () => Interval
-  private readonly format: (p: number) => string
+  private readonly format: (p: number, ref?: number) => string
 
-  constructor(getBars: () => Candle[], getInterval: () => Interval, format: (p: number) => string) {
+  constructor(getBars: () => Candle[], getInterval: () => Interval, format: (p: number, ref?: number) => string) {
     this.getBars = getBars
     this.getInterval = getInterval
     this.format = format
@@ -206,6 +199,24 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
     return { cursorStyle: id === this.selectedId ? 'move' : 'pointer', externalId: id, zOrder: 'top' }
   }
 
+  /**
+   * Magnet: move `pt` onto the nearest open/high/low/close of its bar if that
+   * price is within `px` pixels of the pointer (like TradingView's weak magnet).
+   */
+  snap(pt: Point, y: number, px = 24): Point {
+    if (!this.series) return pt
+    const bar = this.getBars().find((b) => b.time === pt.time)
+    if (!bar) return pt
+    let best: { price: number; dist: number } | null = null
+    for (const price of [bar.open, bar.high, bar.low, bar.close]) {
+      const py = this.series.priceToCoordinate(price)
+      if (py === null) continue
+      const dist = Math.abs(py - y)
+      if (dist <= px && (!best || dist < best.dist)) best = { price, dist }
+    }
+    return best ? { time: pt.time, price: best.price } : pt
+  }
+
   /** Index of the selected drawing's control point under (x, y), if any. */
   handleAt(x: number, y: number): number | null {
     const d = this.drawings.find((dr) => dr.id === this.selectedId)
@@ -235,7 +246,8 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
         case 'ray':
           if (distToSegment(p, a, extendRay(a, b, this.width)) <= HIT_PX) return d.id
           break
-        case 'rect': {
+        case 'rect':
+        case 'measure': {
           const inX = x >= Math.min(a.x, b.x) - HIT_PX && x <= Math.max(a.x, b.x) + HIT_PX
           const inY = y >= Math.min(a.y, b.y) - HIT_PX && y <= Math.max(a.y, b.y) + HIT_PX
           if (inX && inY) return d.id
@@ -309,6 +321,32 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
         ctx.strokeRect(x, y, w, h)
         break
       }
+      case 'measure': {
+        const [pa, pb] = d.points
+        const diff = pb.price - pa.price
+        const up = diff >= 0
+        const tone = up ? '#e8473f' : '#3b74f0'
+        ctx.fillStyle = tone + '22'
+        ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y))
+        ctx.strokeStyle = tone
+        ctx.setLineDash([])
+        ctx.lineWidth = 1.2
+        // vertical and horizontal arrows through the box centre
+        const cx = (a.x + b.x) / 2
+        const cy = (a.y + b.y) / 2
+        this.arrow(ctx, cx, a.y, cx, b.y)
+        this.arrow(ctx, a.x, cy, b.x, cy)
+        const pct = pa.price ? (diff / pa.price) * 100 : 0
+        const la = this.timeToLogical(pa.time)
+        const lb = this.timeToLogical(pb.time)
+        const bars = la !== null && lb !== null ? Math.round(lb - la) : 0
+        const lines = [
+          `${up ? '+' : ''}${this.format(diff, Math.abs(pa.price))} (${up ? '+' : ''}${pct.toFixed(2)}%)`,
+          `${bars}봉 · ${humanSpan(Math.abs(pb.time - pa.time))}`,
+        ]
+        this.box(ctx, lines, cx, up ? Math.min(a.y, b.y) - 8 : Math.max(a.y, b.y) + 8, tone, up ? 'above' : 'below')
+        break
+      }
       case 'fib': {
         const x1 = Math.min(a.x, b.x)
         const x2 = Math.max(a.x, b.x)
@@ -345,6 +383,38 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
     }
   }
 
+  private arrow(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
+    ctx.beginPath()
+    ctx.moveTo(x1, y1)
+    ctx.lineTo(x2, y2)
+    ctx.stroke()
+    const ang = Math.atan2(y2 - y1, x2 - x1)
+    if (Math.hypot(x2 - x1, y2 - y1) < 12) return
+    ctx.beginPath()
+    ctx.moveTo(x2, y2)
+    ctx.lineTo(x2 - 7 * Math.cos(ang - 0.45), y2 - 7 * Math.sin(ang - 0.45))
+    ctx.moveTo(x2, y2)
+    ctx.lineTo(x2 - 7 * Math.cos(ang + 0.45), y2 - 7 * Math.sin(ang + 0.45))
+    ctx.stroke()
+  }
+
+  /** Multi-line label centred on x, placed above or below y. */
+  private box(ctx: CanvasRenderingContext2D, lines: string[], x: number, y: number, color: string, side: 'above' | 'below') {
+    ctx.font = '12px Pretendard, "Malgun Gothic", system-ui, sans-serif'
+    const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16
+    const h = lines.length * 16 + 8
+    const left = x - w / 2
+    const top = side === 'above' ? y - h : y
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.roundRect(left, top, w, h, 5)
+    ctx.fill()
+    ctx.fillStyle = '#fff'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    lines.forEach((l, i) => ctx.fillText(l, x, top + 12 + i * 16))
+  }
+
   private label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string, align: 'left' | 'right') {
     const w = ctx.measureText(text).width + 10
     const left = align === 'right' ? x - w : x
@@ -367,6 +437,16 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
     ctx.strokeStyle = color
     ctx.stroke()
   }
+}
+
+/** 93784 → "1일 2시간", 2700 → "45분". */
+function humanSpan(sec: number): string {
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  if (d) return h ? `${d}일 ${h}시간` : `${d}일`
+  if (h) return m ? `${h}시간 ${m}분` : `${h}시간`
+  return `${m}분`
 }
 
 // ---- persistence (per market, shared across intervals) ----

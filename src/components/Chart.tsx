@@ -6,6 +6,7 @@ import {
   ColorType,
   CrosshairMode,
   LineStyle,
+  PriceScaleMode,
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
@@ -13,9 +14,11 @@ import {
 import {
   bucketStart,
   formatPrice,
+  INTERVAL_SEC,
   KST_OFFSET,
   priceDecimals,
   sourceOf,
+  usSession,
   type Candle,
   type Interval,
 } from '../lib/market'
@@ -49,11 +52,47 @@ interface Props {
 }
 
 interface Legend {
-  open: number
-  high: number
-  low: number
-  close: number
-  volume: number
+  bar: Candle
+  /** Index into the loaded bars (for indicator values). */
+  index: number
+  prevClose?: number
+}
+
+type ScaleMode = 'normal' | 'log' | 'percent'
+
+const SCALE_MODE: Record<ScaleMode, PriceScaleMode> = {
+  normal: PriceScaleMode.Normal,
+  log: PriceScaleMode.Logarithmic,
+  percent: PriceScaleMode.Percentage,
+}
+
+function readPref<T extends string>(key: string, fallback: T): T {
+  try {
+    return (localStorage.getItem(key) as T) || fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writePref(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+const legendAt = (bars: Candle[], i: number): Legend => ({ bar: { ...bars[i] }, index: i, prevClose: bars[i - 1]?.close })
+
+/** "12:34" / "1:02:03" / "2일 03:04:05" until the current bar closes. */
+function fmtCountdown(sec: number): string {
+  const s = Math.max(0, Math.floor(sec))
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const clock = h || d ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`
+  return d ? `${d}일 ${clock}` : clock
 }
 
 export default function Chart({ market, interval, indicators, alertPrices, onAlertAt }: Props) {
@@ -66,6 +105,12 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
   const candlesRef = useRef<Candle[]>([])
   const groupsRef = useRef<IndicatorGroup[]>([])
   const hoveringRef = useRef(false)
+  const [scaleMode, setScaleMode] = useState<ScaleMode>(() => readPref<ScaleMode>('chartview:scale', 'normal'))
+  const [magnet, setMagnet] = useState(() => readPref<string>('chartview:magnet', 'off') === 'on')
+  const magnetRef = useRef(magnet)
+  magnetRef.current = magnet
+  const [awayFromLatest, setAwayFromLatest] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
   const [groups, setGroups] = useState<IndicatorGroup[]>([])
   const [precision, setPrecision] = useState(0)
   const [legend, setLegend] = useState<Legend | null>(null)
@@ -172,7 +217,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     const prim = new DrawingsPrimitive(
       () => candlesRef.current,
       () => intervalRef.current,
-      (p) => formatPrice(p, marketRef.current),
+      (p, ref) => formatPrice(p, marketRef.current, ref),
     )
     candles.attachPrimitive(prim)
     primRef.current = prim
@@ -189,8 +234,9 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         prim.update()
         return
       }
-      const pt = prim.fromXY(x, y)
-      if (!pt) return
+      const raw = prim.fromXY(x, y)
+      if (!raw) return
+      const pt = magnetRef.current ? prim.snap(raw, y) : raw
       if (current === 'alert') {
         onAlertAtRef.current?.(pt.price)
         toolRef.current = 'cursor'
@@ -270,8 +316,9 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       const x = e.clientX - rect.left
       const y = e.clientY - rect.top
       if (drag.index !== null) {
-        const pt = prim.fromXY(x, y)
-        if (!pt) return
+        const raw = prim.fromXY(x, y)
+        if (!raw) return
+        const pt = magnetRef.current ? prim.snap(raw, y) : raw
         d.points = d.points.map((p, i) => (i === drag!.index ? pt : p))
       } else {
         const cur = prim.rawAt(x, y)
@@ -316,12 +363,24 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       const bars = candlesRef.current
       hoveringRef.current = param.time !== undefined
       if (!bars.length) return
-      let bar = bars[bars.length - 1]
+      let i = bars.length - 1
       if (param.time !== undefined) {
         const t = (param.time as number) - KST_OFFSET
-        bar = bars.find((b) => b.time === t) ?? bar
+        const j = bars.findIndex((b) => b.time === t)
+        if (j >= 0) i = j
       }
-      setLegend({ ...bar })
+      setLegend(legendAt(bars, i))
+    })
+
+    // Show a "jump to latest" button once the newest bar scrolls out of view.
+    let away = false
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      const n = candlesRef.current.length
+      const next = !!range && n > 0 && range.to < n - 3
+      if (next !== away) {
+        away = next
+        setAwayFromLatest(next)
+      }
     })
 
     chartRef.current = chart
@@ -337,6 +396,24 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       primRef.current = null
       groupsRef.current = []
     }
+  }, [])
+
+  // Price scale: normal / logarithmic / percentage.
+  useEffect(() => {
+    candleRef.current?.priceScale().applyOptions({ mode: SCALE_MODE[scaleMode] })
+    writePref('chartview:scale', scaleMode)
+  }, [scaleMode])
+
+  // Magnet: crosshair snaps to OHLC, and drawings snap when placed or dragged.
+  useEffect(() => {
+    chartRef.current?.applyOptions({ crosshair: { mode: magnet ? CrosshairMode.Magnet : CrosshairMode.Normal } })
+    writePref('chartview:magnet', magnet ? 'on' : 'off')
+  }, [magnet])
+
+  // Clock for the bar-close countdown.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
   }, [])
 
   // Active price alerts for this market as dashed price lines.
@@ -439,7 +516,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       groupsRef.current.forEach((g) => g.render(bars, !newBar))
       newBar = false
       // Keep the OHLC legend on the live candle unless the user is hovering another bar.
-      if (!hoveringRef.current) setLegend({ ...last })
+      if (!hoveringRef.current) setLegend(legendAt(bars, bars.length - 1))
     }
     const scheduleRender = (isNewBar: boolean) => {
       newBar ||= isNewBar
@@ -463,7 +540,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         setPrecision(precision)
         renderAll()
         chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, bars.length - 120), to: bars.length + 6 })
-        setLegend(bars.length ? { ...bars[bars.length - 1] } : null)
+        setLegend(bars.length ? legendAt(bars, bars.length - 1) : null)
         setStatus('ready')
       })
       .catch(() => !cancelled && setStatus('error'))
@@ -551,7 +628,31 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     }
   }, [market, interval])
 
-  const up = legend ? legend.close >= legend.open : true
+  const bar = legend?.bar
+  const up = bar ? bar.close >= bar.open : true
+  const change = bar && legend?.prevClose ? ((bar.close - legend.prevClose) / legend.prevClose) * 100 : null
+  const legendIndex = legend?.index ?? -1
+
+  // Time left in the current bar. US stocks only while trading, intraday bars only.
+  const source = sourceOf(market)
+  const isUs = source.id === 'us'
+  const session = isUs ? usSession(new Date(now)) : null
+  const countdownSec =
+    isUs && (session === 'closed' || ['4h', '1D', '1W'].includes(interval))
+      ? null
+      : bucketStart(now, interval, source.candleTzOffset) + INTERVAL_SEC[interval] - now / 1000
+
+  // Top offset (px) of each indicator pane, for its own legend.
+  const paneTop = (pane: number) => {
+    const c = chartRef.current
+    if (!c) return 0
+    let top = 0
+    for (let k = 0; k < pane; k++) top += c.paneSize(k).height + 1
+    return top
+  }
+  const fmtValue = (v: number | null, kind: 'price' | 'plain', ref?: number) =>
+    v === null ? '-' : kind === 'price' ? formatPrice(v, market, ref) : v.toFixed(2)
+  const refPrice = bar?.close
   return (
     <div className="chart-wrap">
       <DrawingToolbar
@@ -561,6 +662,8 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         onDelete={deleteSelected}
         canClear={drawCount > 0}
         onClear={clearAll}
+        magnet={magnet}
+        onToggleMagnet={() => setMagnet((m) => !m)}
       />
       <div className={`chart-area ${tool !== 'cursor' ? 'drawing' : ''}`}>
       {tool !== 'cursor' && (
@@ -611,25 +714,73 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         </div>
       )}
       <div className="chart-legend">
-        {legend && (
+        {bar && (
           <>
-            <span>시 <b className={up ? 'up' : 'down'}>{formatPrice(legend.open, market)}</b></span>
-            <span>고 <b className={up ? 'up' : 'down'}>{formatPrice(legend.high, market)}</b></span>
-            <span>저 <b className={up ? 'up' : 'down'}>{formatPrice(legend.low, market)}</b></span>
-            <span>종 <b className={up ? 'up' : 'down'}>{formatPrice(legend.close, market)}</b></span>
-            <span>거래량 <b>{legend.volume.toLocaleString('ko-KR', { maximumFractionDigits: 3 })}</b></span>
+            <span>시 <b className={up ? 'up' : 'down'}>{formatPrice(bar.open, market)}</b></span>
+            <span>고 <b className={up ? 'up' : 'down'}>{formatPrice(bar.high, market)}</b></span>
+            <span>저 <b className={up ? 'up' : 'down'}>{formatPrice(bar.low, market)}</b></span>
+            <span>종 <b className={up ? 'up' : 'down'}>{formatPrice(bar.close, market)}</b></span>
+            {change !== null && (
+              <b className={change >= 0 ? 'up' : 'down'}>
+                {change >= 0 ? '+' : ''}
+                {change.toFixed(2)}%
+              </b>
+            )}
+            <span>거래량 <b>{bar.volume.toLocaleString('ko-KR', { maximumFractionDigits: 3 })}</b></span>
+            {countdownSec !== null && (
+              <span className="countdown" title="현재 봉 마감까지 남은 시간">
+                ⏱ <b>{fmtCountdown(countdownSec)}</b>
+              </span>
+            )}
           </>
         )}
-        {groups.some((g) => g.id === 'ma' || g.id === 'bb') && (
-          <div className="ind">
-            {groups
-              .filter((g) => g.id === 'ma' || g.id === 'bb')
-              .flatMap((g) => g.legend)
-              .map((l) => (
-                <span key={l.label} style={{ color: l.color }}>{l.label}</span>
+        {groups
+          .filter((g) => g.pane === 0)
+          .map((g) => (
+            <div className="ind" key={g.id}>
+              {g.id === 'bb' && <span style={{ color: g.legend[0].color }}>{g.title}</span>}
+              {g.valuesAt(legendIndex).map((v) => (
+                <span key={v.label} style={{ color: v.color }}>
+                  {v.label} <b>{fmtValue(v.value, v.kind, refPrice)}</b>
+                </span>
               ))}
+            </div>
+          ))}
+      </div>
+      {groups
+        .filter((g) => g.pane > 0)
+        .map((g) => (
+          <div className="pane-legend" key={g.id} style={{ top: paneTop(g.pane) + 4 }}>
+            <span className="pane-title">{g.title}</span>
+            {g.valuesAt(legendIndex).map((v) => (
+              <span key={v.label} style={{ color: v.color }}>
+                {g.valuesAt(legendIndex).length > 1 && `${v.label} `}
+                <b>{fmtValue(v.value, v.kind, refPrice)}</b>
+              </span>
+            ))}
           </div>
+        ))}
+      <div className="chart-ctrls">
+        {awayFromLatest && (
+          <button
+            className="ctrl-btn latest"
+            title="최신 봉으로 이동"
+            onClick={() => chartRef.current?.timeScale().scrollToRealTime()}
+          >
+            최신 ⇥
+          </button>
         )}
+        {(['log', 'percent'] as const).map((m) => (
+          <button
+            key={m}
+            className={`ctrl-btn ${scaleMode === m ? 'on' : ''}`}
+            title={m === 'log' ? '로그 스케일' : '퍼센트 스케일 (화면 첫 봉 기준)'}
+            aria-pressed={scaleMode === m}
+            onClick={() => setScaleMode((cur) => (cur === m ? 'normal' : m))}
+          >
+            {m === 'log' ? 'log' : '%'}
+          </button>
+        ))}
       </div>
       {status === 'loading' && <div className="chart-overlay">불러오는 중…</div>}
       {status === 'error' && <div className="chart-overlay">시세를 불러오지 못했습니다</div>}

@@ -16,8 +16,10 @@ export const usStocksEnabled = Boolean(PROXY)
 
 const TIMEFRAME: Record<Interval, string> = {
   '1m': '1Min',
+  '3m': '3Min',
   '5m': '5Min',
   '15m': '15Min',
+  '30m': '30Min',
   '1h': '1Hour',
   '4h': '4Hour',
   '1D': '1Day',
@@ -116,6 +118,7 @@ function toTicker(market: string, s: Snapshot): Ticker | null {
     acc_trade_price_24h: daily ? daily.v * (daily.vw ?? daily.c) : 0,
     high_price: daily?.h ?? price!,
     low_price: daily?.l ?? price!,
+    timestamp: s.latestTrade?.t ? Date.parse(s.latestTrade.t) : undefined,
   }
 }
 
@@ -131,6 +134,39 @@ async function fetchSnapshots(markets: Market[]): Promise<Ticker[]> {
   return Object.entries(data)
     .map(([sym, s]) => toTicker(code(sym), s))
     .filter((t): t is Ticker => t !== null)
+}
+
+// ---- market session (New York time) ----
+
+export type UsSession = 'pre' | 'regular' | 'after' | 'closed'
+
+export const US_SESSION_LABEL: Record<UsSession, string> = {
+  pre: '프리마켓',
+  regular: '정규장',
+  after: '애프터마켓',
+  closed: '장 마감',
+}
+
+/**
+ * US equity session by the New York clock: pre 04:00–09:30, regular 09:30–16:00,
+ * after-hours 16:00–20:00, otherwise closed; weekends closed. Exchange holidays
+ * are not known here — callers can treat a stale last trade as "closed".
+ */
+export function usSession(now = new Date()): UsSession {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: 'numeric',
+    minute: 'numeric',
+    hourCycle: 'h23',
+  }).formatToParts(now)
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
+  if (get('weekday') === 'Sat' || get('weekday') === 'Sun') return 'closed'
+  const mins = Number(get('hour')) * 60 + Number(get('minute'))
+  if (mins >= 4 * 60 && mins < 9 * 60 + 30) return 'pre'
+  if (mins >= 9 * 60 + 30 && mins < 16 * 60) return 'regular'
+  if (mins >= 16 * 60 && mins < 20 * 60) return 'after'
+  return 'closed'
 }
 
 // ---- user-added stocks (search) ----
