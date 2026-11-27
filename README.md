@@ -1,6 +1,6 @@
 # ChartView
 
-빗썸(원화)과 바이낸스(USDT) 공개 API로 만든 트레이딩뷰 스타일의 실시간 코인 차트 웹앱입니다.
+트레이딩뷰 스타일의 실시간 차트 웹앱입니다. 코인은 빗썸(원화)·바이낸스(USDT) 공개 API, 미국 주식은 Alpaca 시세를 Cloudflare Worker로 중계해 보여줍니다.
 
 데모: https://rkdntm1.github.io/TradingChart_byClaude/
 
@@ -20,8 +20,9 @@
   - 목표가가 현재가보다 높으면 상승 돌파, 낮으면 하락 돌파 시 알림 (방향 자동)
   - 화면 안 토스트 + 알림음 + 브라우저 알림(허용 시), 차트에 노란 점선 표시
   - 보고 있는 종목이 아니어도 원화·USDT 전 종목을 감시, 발생 기록 보관
-- **마켓 목록**: [원화 · 빗썸] 약 490종목 / [USDT · 바이낸스] 약 530종목 / [관심] 탭, 실시간 시세, 검색(한글/영문/심볼), 관심종목(★)
+- **마켓 목록**: [원화 · 빗썸] 약 490종목 / [USDT · 바이낸스] 약 530종목 / [미국주식] 41종목 / [관심] 탭, 실시간 시세, 검색(한글/영문/심볼), 관심종목(★)
   - 바이낸스 종목에도 빗썸의 한글 이름을 심볼 기준으로 붙여 표시
+  - 미국주식: 인기 종목·ETF 41개(애플, 엔비디아, 테슬라, SPY, QQQ…), Alpaca 무료 시세(IEX 기준), 몇 초 간격 갱신
   - 가격 자릿수와 거래대금 단위는 마켓에 맞춰 표시 (원화: 억/조, USDT: 거래소 호가 단위, $M/$B)
 - 선택한 종목·기간·지표를 브라우저에 기억
 - 다크/라이트 모드 자동 전환, 모바일 레이아웃
@@ -46,6 +47,28 @@ API 키가 필요 없습니다. 브라우저에서 빗썸 API(`api.bithumb.com`)
 - 최초 1회 설정: 저장소 **Settings → Pages → Build and deployment → Source** 를 **GitHub Actions** 로 선택
 - `vite.config.ts`의 `base: './'` 덕분에 하위 경로에서도 정적 파일이 올바르게 로드됩니다.
 
+## 미국 주식 (Cloudflare Worker)
+
+미국 주식 시세는 API 키가 필요해서, 키를 숨겨 주는 Cloudflare Worker(`worker/`)를 거칩니다.
+
+```
+브라우저 ──▶ Cloudflare Worker (Alpaca 키 보관 · 짧은 캐시) ──▶ Alpaca Market Data (IEX)
+```
+
+- Worker 주소는 `.env`의 `VITE_US_STOCK_PROXY`로 지정합니다(공개 주소, 키 아님). 값이 없으면 미국주식 탭은 숨겨집니다.
+- Worker 배포 (GitHub push로는 자동 배포되지 않음):
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npx wrangler deploy
+npx wrangler secret put ALPACA_KEY_ID      # 최초 1회
+npx wrangler secret put ALPACA_SECRET_KEY  # 최초 1회
+```
+
+> Windows PowerShell에서 `npx`가 실행 정책 때문에 막히면 `npx.cmd`를 사용하세요.
+
 ## 구조
 
 ```
@@ -56,6 +79,7 @@ src/
     format.ts             마켓별 가격/거래대금 포맷 (KRW / USDT)
     bithumb.ts            빗썸 어댑터 (원화, KST 기준 캔들)
     binance.ts            바이낸스 어댑터 (USDT, UTC 기준 캔들)
+    usstocks.ts           미국 주식 어댑터 (Worker 경유, polling)
     index.ts              SOURCES, sourceOf(코드)
   lib/indicators.ts       SMA / EMA / 볼린저밴드 / RSI / MACD 계산
   lib/chartIndicators.ts  지표 → lightweight-charts 시리즈 연결
@@ -76,6 +100,7 @@ src/
 - React 19 + TypeScript + Vite
 - [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) v5 (Apache-2.0, 출처 표기 필요)
 - 빗썸 공개 API v1, 바이낸스 Spot 시세 API (둘 다 인증 불필요)
+- Alpaca Market Data API (무료 플랜, IEX) + Cloudflare Workers
 
 ## 다음 단계 아이디어
 
@@ -83,6 +108,7 @@ src/
 - 호가창 / 체결 내역 패널
 - 탭을 닫아도 오는 알림 (서버 + 웹 푸시)
 - 회원 기능 + 백엔드에 차트 설정 저장
-- 국내/해외 주식 데이터 소스 추가
+- 국내 주식 (한국투자증권 KIS API)
+- 미국 주식 종목 검색·추가
 
 > 시세 데이터의 상업적 재배포에는 데이터 제공처의 약관을 확인하세요.
