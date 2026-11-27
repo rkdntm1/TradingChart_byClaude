@@ -501,8 +501,9 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     }
     chart.timeScale().subscribeVisibleLogicalRangeChange(onRange)
 
-    // Real-time trades build / extend the latest candle.
-    const unsubscribe = source.subscribeTrades(market, (t) => {
+    // Live updates. Coins stream trades and we build the current candle;
+    // US stocks deliver ready-made bars (polled), which we merge by time.
+    const onTrade = (t: { code: string; trade_price: number; trade_volume: number; trade_timestamp: number }) => {
       const bars = candlesRef.current
       if (cancelled || !bars.length || t.code !== market) return
       const start = bucketStart(t.trade_timestamp, interval, source.candleTzOffset)
@@ -518,7 +519,29 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         last.volume += t.trade_volume
         scheduleRender(false)
       }
-    })
+    }
+    const onBar = (bar: Candle) => {
+      const bars = candlesRef.current
+      if (cancelled || !bars.length) return
+      const last = bars[bars.length - 1]
+      if (bar.time > last.time) {
+        bars.push(bar)
+        scheduleRender(true)
+      } else if (bar.time === last.time) {
+        bars[bars.length - 1] = bar
+        scheduleRender(false)
+      } else {
+        // An earlier bar was revised (e.g. finalized late): patch it and redraw everything.
+        const i = bars.findIndex((b) => b.time === bar.time)
+        if (i >= 0) {
+          bars[i] = bar
+          renderAll()
+        }
+      }
+    }
+    const unsubscribe = source.subscribeBars
+      ? source.subscribeBars(market, interval, onBar)
+      : (source.subscribeTrades?.(market, onTrade) ?? (() => {}))
 
     return () => {
       cancelled = true

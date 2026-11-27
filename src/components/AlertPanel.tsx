@@ -79,7 +79,7 @@ export default function AlertPanel(p: Props) {
           <span className="ap-cur">현재가 {current !== undefined ? formatPrice(current, p.market) : '-'}</span>
         </div>
         <label className="ap-field">
-          <span>목표가 ({quoteOf(p.market) === 'KRW' ? '원' : 'USDT'})</span>
+          <span>목표가 ({quoteOf(p.market) === 'KRW' ? '원' : quoteOf(p.market)})</span>
           <input
             inputMode="decimal"
             value={priceText}

@@ -70,7 +70,7 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
       <div className="side-head">
         <input
           className="search"
-          placeholder="코인명 / 심볼 검색"
+          placeholder="종목명 / 심볼 검색"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -89,7 +89,7 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
         <i />
         <i>종목</i>
         <span>현재가</span>
-        <span>{tab === 'bithumb' ? '전일대비' : '24h'}</span>
+        <span>{tab === 'binance' ? '24h' : '전일대비'}</span>
         <span>거래대금</span>
       </div>
       <div className="list">
@@ -107,7 +107,7 @@ export default function Watchlist({ markets, tickers, selected, onSelect }: Prop
         {!rows.length && <div className="empty">{markets.length ? '검색 결과가 없습니다' : '불러오는 중…'}</div>}
       </div>
       <div className="foot">
-        시세: 빗썸 · 바이낸스 공개 API · 차트:{' '}
+        시세: 빗썸 · 바이낸스 · Alpaca(IEX) · 차트:{' '}
         <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
           TradingView Lightweight Charts
         </a>

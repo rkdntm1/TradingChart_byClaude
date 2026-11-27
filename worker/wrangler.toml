@@ -1,0 +1,11 @@
+name = "chartview-us-stocks"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+# Sites allowed to call this Worker (comma-separated). localhost is always allowed for development.
+ALLOWED_ORIGINS = "https://rkdntm1.github.io"
+
+# Secrets (set with `npx wrangler secret put <NAME>`, never committed):
+#   ALPACA_KEY_ID
+#   ALPACA_SECRET_KEY

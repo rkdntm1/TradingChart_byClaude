@@ -2,8 +2,8 @@
 // converts its own API responses into these shapes, so the chart, indicators,
 // drawings and alerts never need to know which exchange they are looking at.
 
-export type SourceId = 'bithumb' | 'binance'
-export type Quote = 'KRW' | 'USDT'
+export type SourceId = 'bithumb' | 'binance' | 'us'
+export type Quote = 'KRW' | 'USDT' | 'USD'
 
 /** Shift used to render chart times in KST (lightweight-charts works in UTC). */
 export const KST_OFFSET = 9 * 3600
@@ -71,7 +71,10 @@ export interface DataSource {
   subscribeTickers(markets: Market[], onTicker: (t: Ticker) => void): () => void
   /** Up to 200 candles ending before `toUtcSec` (exclusive), oldest first. */
   fetchCandles(market: string, interval: Interval, toUtcSec?: number): Promise<Candle[]>
-  subscribeTrades(market: string, onTrade: (t: Trade) => void): () => void
+  /** Live trades; the chart builds the current candle from them (coins). */
+  subscribeTrades?(market: string, onTrade: (t: Trade) => void): () => void
+  /** Live finished/partial bars, for sources that can't stream trades (US stocks). */
+  subscribeBars?(market: string, interval: Interval, onBar: (c: Candle) => void): () => void
 }
 
 export const INTERVAL_SEC: Record<Interval, number> = {

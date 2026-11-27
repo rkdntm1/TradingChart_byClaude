@@ -59,7 +59,7 @@ export function useMarketData() {
   const markets = useMemo(() => {
     const korean = new Map((bySource.bithumb ?? []).map((m) => [m.base, m.korean_name]))
     const binance = (bySource.binance ?? []).map((m) => ({ ...m, korean_name: korean.get(m.base) ?? m.base }))
-    return [...(bySource.bithumb ?? []), ...binance]
+    return [...(bySource.bithumb ?? []), ...binance, ...(bySource.us ?? [])]
   }, [bySource])
 
   return { markets, tickers }

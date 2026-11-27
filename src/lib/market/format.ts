@@ -12,11 +12,13 @@ export function registerMarkets(markets: Market[]) {
 }
 
 /** Quote currency of a market code (works before markets are loaded). */
-export const quoteOf = (code: string): Quote => registry.get(code)?.quote ?? (code.startsWith('KRW-') ? 'KRW' : 'USDT')
+export const quoteOf = (code: string): Quote =>
+  registry.get(code)?.quote ?? (code.startsWith('KRW-') ? 'KRW' : code.startsWith('US-') ? 'USD' : 'USDT')
 
-/** Base asset, e.g. KRW-BTC → BTC, BTCUSDT → BTC. */
+/** Base asset, e.g. KRW-BTC → BTC, BTCUSDT → BTC, US-AAPL → AAPL. */
 export const baseOf = (code: string): string =>
-  registry.get(code)?.base ?? (code.startsWith('KRW-') ? code.slice(4) : code.replace(/USDT$/, ''))
+  registry.get(code)?.base ??
+  (code.startsWith('KRW-') ? code.slice(4) : code.startsWith('US-') ? code.slice(3) : code.replace(/USDT$/, ''))
 
 /** Display pair, e.g. "BTC/KRW" or "BTC/USDT". */
 export const pairLabel = (code: string) => `${baseOf(code)}/${quoteOf(code)}`
@@ -31,6 +33,8 @@ export function priceDecimals(code: string, price: number): number {
     if (price >= 0.01) return 4
     return 6
   }
+  // US stocks trade in cents (sub-dollar stocks in 1/100 cent).
+  if (quoteOf(code) === 'USD') return price >= 1 ? 2 : 4
   // USDT fallback: about 5 significant digits.
   if (!Number.isFinite(price) || price <= 0) return 2
   return Math.min(8, Math.max(2, 4 - Math.floor(Math.log10(price))))
@@ -57,5 +61,5 @@ export function formatVolume(v: number | null | undefined, code: string): string
   return '$' + v.toFixed(0)
 }
 
-/** Unit suffix for prices in sentences, e.g. "84,000,000원" / "61,234.56 USDT". */
-export const priceUnit = (code: string) => (quoteOf(code) === 'KRW' ? '원' : ' USDT')
+/** Unit suffix for prices in sentences, e.g. "84,000,000원" / "61,234.56 USDT" / "231.50 USD". */
+export const priceUnit = (code: string) => (quoteOf(code) === 'KRW' ? '원' : ` ${quoteOf(code)}`)

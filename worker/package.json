@@ -1,0 +1,12 @@
+{
+  "name": "chartview-us-stocks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.168.0"
+  }
+}
