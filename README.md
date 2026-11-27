@@ -1,6 +1,6 @@
 # ChartView
 
-빗썸 공개 API로 만든 트레이딩뷰 스타일의 실시간 코인 차트 웹앱입니다.
+빗썸(원화)과 바이낸스(USDT) 공개 API로 만든 트레이딩뷰 스타일의 실시간 코인 차트 웹앱입니다.
 
 데모: https://rkdntm1.github.io/TradingChart_byClaude/
 
@@ -19,8 +19,10 @@
 - **가격 알림**: 헤더의 🔔 버튼 또는 차트 왼쪽 알림 도구(차트에서 가격 클릭)로 설정
   - 목표가가 현재가보다 높으면 상승 돌파, 낮으면 하락 돌파 시 알림 (방향 자동)
   - 화면 안 토스트 + 알림음 + 브라우저 알림(허용 시), 차트에 노란 점선 표시
-  - 보고 있는 종목이 아니어도 원화 마켓 전체를 감시, 발생 기록 보관
-- **원화 마켓 목록**: 전 종목 실시간 시세, 검색(한글/영문/심볼), 관심종목(★)
+  - 보고 있는 종목이 아니어도 원화·USDT 전 종목을 감시, 발생 기록 보관
+- **마켓 목록**: [원화 · 빗썸] 약 490종목 / [USDT · 바이낸스] 약 530종목 / [관심] 탭, 실시간 시세, 검색(한글/영문/심볼), 관심종목(★)
+  - 바이낸스 종목에도 빗썸의 한글 이름을 심볼 기준으로 붙여 표시
+  - 가격 자릿수와 거래대금 단위는 마켓에 맞춰 표시 (원화: 억/조, USDT: 거래소 호가 단위, $M/$B)
 - 선택한 종목·기간·지표를 브라우저에 기억
 - 다크/라이트 모드 자동 전환, 모바일 레이아웃
 
@@ -32,7 +34,7 @@ npm run dev      # http://localhost:5173
 npm run build    # dist/ 에 정적 파일 생성
 ```
 
-API 키가 필요 없습니다. 브라우저에서 빗썸 API(`api.bithumb.com`)를 직접 호출합니다.
+API 키가 필요 없습니다. 브라우저에서 빗썸 API(`api.bithumb.com`)와 바이낸스 시세 전용 API(`data-api.binance.vision`)를 직접 호출합니다.
 
 > 처음에는 업비트 API를 썼지만, 업비트는 브라우저에서 보낸 요청(Origin 헤더 포함)을 10초당 1회로 제한해서 배포 사이트에서 시세를 불러올 수 없었습니다. 빗썸 v1 API는 업비트와 형식이 거의 같고 브라우저에서 바로 호출할 수 있어서 전환했습니다.
 
@@ -48,7 +50,13 @@ API 키가 필요 없습니다. 브라우저에서 빗썸 API(`api.bithumb.com`)
 
 ```
 src/
-  lib/bithumb.ts          빗썸 REST/WebSocket 클라이언트, KST 캔들 버킷 계산, 재시도, 포맷터
+  lib/market/            데이터 소스 계층 (거래소와 무관한 공통 형태)
+    types.ts              Market/Ticker/Candle/Trade, DataSource 인터페이스, bucketStart
+    net.ts                재시도·백오프 HTTP, 자동 재연결 WebSocket
+    format.ts             마켓별 가격/거래대금 포맷 (KRW / USDT)
+    bithumb.ts            빗썸 어댑터 (원화, KST 기준 캔들)
+    binance.ts            바이낸스 어댑터 (USDT, UTC 기준 캔들)
+    index.ts              SOURCES, sourceOf(코드)
   lib/indicators.ts       SMA / EMA / 볼린저밴드 / RSI / MACD 계산
   lib/chartIndicators.ts  지표 → lightweight-charts 시리즈 연결
   lib/drawings.ts         드로잉 렌더링(series primitive), 좌표 변환, 히트 테스트, 저장
@@ -67,7 +75,7 @@ src/
 
 - React 19 + TypeScript + Vite
 - [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) v5 (Apache-2.0, 출처 표기 필요)
-- 빗썸 공개 API v1 (시세 조회는 인증 불필요)
+- 빗썸 공개 API v1, 바이낸스 Spot 시세 API (둘 다 인증 불필요)
 
 ## 다음 단계 아이디어
 
