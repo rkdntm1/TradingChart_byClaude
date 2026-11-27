@@ -19,8 +19,11 @@ export function useMarketData() {
       setTickers((prev) => ({ ...prev, ...batch }))
     }
 
-    fetchMarkets()
-      .then(async (list) => {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+
+    const start = async () => {
+      try {
+        const list = await fetchMarkets()
         if (cancelled) return
         setMarkets(list)
         const codes = list.map((m) => m.market)
@@ -31,11 +34,16 @@ export function useMarketData() {
           pending[t.code] = t
           if (!frame) frame = requestAnimationFrame(flush)
         })
-      })
-      .catch(() => {})
+      } catch {
+        // fetch already retried with backoff; keep trying slowly rather than staying empty
+        if (!cancelled) retryTimer = setTimeout(start, 10000)
+      }
+    }
+    start()
 
     return () => {
       cancelled = true
+      clearTimeout(retryTimer)
       cancelAnimationFrame(frame)
       unsubscribe?.()
     }

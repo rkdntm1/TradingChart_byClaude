@@ -78,10 +78,26 @@ export function bucketStart(tsMs: number, interval: Interval): number {
   return day - dow * 86400
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Upbit API ${res.status}: ${url}`)
-  return res.json() as Promise<T>
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * GET JSON with retries. Upbit answers 429 when an IP exceeds its rate limit
+ * (e.g. several tabs open); back off and try again instead of failing for good.
+ */
+async function getJson<T>(url: string, attempts = 5): Promise<T> {
+  for (let i = 0; ; i++) {
+    let res: Response | null = null
+    try {
+      res = await fetch(url)
+    } catch (err) {
+      if (i >= attempts - 1) throw err // network error, out of retries
+    }
+    if (res?.ok) return res.json() as Promise<T>
+    const retriable = !res || res.status === 429 || res.status >= 500
+    if (!retriable || i >= attempts - 1) throw new Error(`Upbit API ${res?.status ?? 'network'}: ${url}`)
+    const retryAfter = Number(res?.headers.get('Retry-After'))
+    await sleep(retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** i + Math.random() * 300)
+  }
 }
 
 export async function fetchMarkets(): Promise<Market[]> {
@@ -128,11 +144,14 @@ export function subscribe<T>(type: 'ticker' | 'trade', codes: string[], onMessag
   let ws: WebSocket | null = null
   let closed = false
   let retry: ReturnType<typeof setTimeout> | undefined
+  // Exponential backoff (1s → 30s) so a rate-limited IP isn't hammered with reconnects.
+  let delay = 1000
 
   const connect = () => {
     ws = new WebSocket(WS)
     ws.binaryType = 'arraybuffer'
     ws.onopen = () => {
+      delay = 1000
       ws?.send(JSON.stringify([{ ticket: crypto.randomUUID() }, { type, codes }, { format: 'DEFAULT' }]))
     }
     ws.onmessage = (ev) => {
@@ -144,7 +163,9 @@ export function subscribe<T>(type: 'ticker' | 'trade', codes: string[], onMessag
       }
     }
     ws.onclose = () => {
-      if (!closed) retry = setTimeout(connect, 2000)
+      if (closed) return
+      retry = setTimeout(connect, delay + Math.random() * 500)
+      delay = Math.min(delay * 2, 30000)
     }
   }
   connect()
