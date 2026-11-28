@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import AlertPanel from './components/AlertPanel'
 import Chart from './components/Chart'
+import ChartErrorBoundary from './components/ChartErrorBoundary'
 import Toasts from './components/Toasts'
 import { useAlerts } from './hooks/useAlerts'
 import { INDICATORS, normalizeParams, type IndicatorId, type IndicatorParams } from './lib/chartIndicators'
@@ -9,6 +10,7 @@ import ShortcutHelp from './components/ShortcutHelp'
 import { intervalKey, isPlainKey, isTypingTarget } from './lib/shortcuts'
 import Watchlist from './components/Watchlist'
 import { useMarketData } from './hooks/useMarketData'
+import { LAYOUTS, useChartLayout, type LayoutId } from './hooks/useChartLayout'
 import {
   baseOf,
   formatPrice,
@@ -18,7 +20,6 @@ import {
   priceDecimals,
   US_SESSION_LABEL,
   usSession,
-  type Interval,
 } from './lib/market'
 import './App.css'
 
@@ -40,9 +41,41 @@ function usePersisted<T extends string>(key: string, initial: T) {
   return [value, setValue] as const
 }
 
+const EMPTY: number[] = []
+
+/** True while the viewport is phone/tablet sized (matches the CSS breakpoint). */
+function useNarrow(query = '(max-width: 900px)') {
+  const [narrow, setNarrow] = useState(() => typeof matchMedia !== 'undefined' && matchMedia(query).matches)
+  useEffect(() => {
+    const mq = matchMedia(query)
+    const on = () => setNarrow(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [query])
+  return narrow
+}
+
+/** Small schematic of each layout for the toolbar buttons. */
+function LayoutIcon({ id }: { id: LayoutId }) {
+  const box = { x: 1.5, y: 2.5, w: 15, h: 13 }
+  const lines =
+    id === '2h' ? ['M9 2.5v13'] : id === '2v' ? ['M1.5 9h15'] : id === '4' ? ['M9 2.5v13', 'M1.5 9h15'] : []
+  return (
+    <svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4">
+      <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="1.5" />
+      {lines.map((d) => (
+        <path key={d} d={d} />
+      ))}
+    </svg>
+  )
+}
+
 export default function App() {
-  const [market, setMarket] = usePersisted<string>('chartview:market', 'KRW-BTC')
-  const [interval, setInterval] = usePersisted<Interval>('chartview:interval', '15m')
+  // Up to four charts; the active one is what the header, market list, toolbar and shortcuts control.
+  const { layout, setLayout, count, cells, activeIndex, setActive, market, interval, setMarket, setInterval } =
+    useChartLayout()
+  // Phones: only the active chart is mounted (no hidden charts holding data connections).
+  const narrow = useNarrow()
   const [indicatorStr, setIndicatorStr] = usePersisted<string>('chartview:indicators', 'ma,rsi')
   const indicators = useMemo(
     () => indicatorStr.split(',').filter((s): s is IndicatorId => INDICATORS.some((d) => d.id === s)),
@@ -108,18 +141,25 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [setInterval])
   const closeAlerts = useCallback(() => setAlertsOpen(false), [])
-  const marketAlertPrices = useMemo(
-    () => active.filter((a) => a.market === market).map((a) => a.price),
-    [active, market],
-  )
-  const addAlertAt = useCallback(
-    (price: number) => {
-      const cur = tickers[market]?.trade_price
-      // Chart clicks give arbitrary decimals; round to the coin's price precision.
-      if (cur !== undefined) addAlert(market, +price.toFixed(priceDecimals(market, cur)), cur)
-    },
-    [tickers, market, addAlert],
-  )
+  const alertPricesByMarket = useMemo(() => {
+    const map: Record<string, number[]> = {}
+    for (const a of active) (map[a.market] ??= []).push(a.price)
+    return map
+  }, [active])
+  const addAlertFor = (code: string, price: number) => {
+    const cur = tickers[code]?.trade_price
+    // Chart clicks give arbitrary decimals; round to the coin's price precision.
+    if (cur !== undefined) addAlert(code, +price.toFixed(priceDecimals(code, cur)), cur)
+  }
+
+  /** US stocks: false while closed or on a holiday (no trade in 30 minutes during a session). */
+  const isMarketOpen = (code: string) => {
+    if (!code.startsWith('US-')) return true
+    const s = usSession()
+    const ts = tickers[code]?.timestamp
+    const stale = ts !== undefined && Date.now() - ts > 30 * 60 * 1000
+    return s !== 'closed' && !stale
+  }
 
   const info = markets.find((m) => m.market === market)
   const t = tickers[market]
@@ -253,6 +293,20 @@ export default function App() {
           {settingsOpen && (
             <IndicatorSettings params={indicatorParams} onApply={applyIndicatorParams} onClose={closeSettings} />
           )}
+          <span className="layout-btns" role="group" aria-label="차트 배치">
+            {LAYOUTS.map((l) => (
+              <button
+                key={l.id}
+                className={`tb-btn layout-btn ${layout === l.id ? 'on' : ''}`}
+                title={l.label}
+                aria-label={l.label}
+                aria-pressed={layout === l.id}
+                onClick={() => setLayout(l.id)}
+              >
+                <LayoutIcon id={l.id} />
+              </button>
+            ))}
+          </span>
           <button
             className="tb-btn kbd-btn"
             title="키보드 단축키 (?)"
@@ -262,15 +316,41 @@ export default function App() {
             ⌨
           </button>
         </div>
-        <Chart
-          market={market}
-          interval={interval}
-          indicators={indicators}
-          indicatorParams={indicatorParams}
-          alertPrices={marketAlertPrices}
-          onAlertAt={addAlertAt}
-          marketOpen={!isUs || (session !== 'closed' && !holiday)}
-        />
+        <div className={`chart-grid layout-${layout}`}>
+          {cells.slice(0, count).map((c, i) => {
+            if (narrow && i !== activeIndex) return null
+            const tk = tickers[c.market]
+            const tone = !tk || tk.change === 'EVEN' ? '' : tk.change === 'RISE' ? 'up' : 'down'
+            return (
+              <div
+                key={i}
+                className={`chart-cell ${i === activeIndex ? 'active' : ''}`}
+                onPointerDownCapture={() => i !== activeIndex && setActive(i)}
+              >
+                {count > 1 && (
+                  <div className="cell-head" title="클릭하면 이 차트를 선택합니다">
+                    <b>{nameOf(c.market)}</b>
+                    <span>{pairLabel(c.market)}</span>
+                    <span>· {INTERVALS.find((iv) => iv.id === c.interval)?.label}</span>
+                    {tk && <span className={`cell-price ${tone}`}>{formatPrice(tk.trade_price, c.market)}</span>}
+                  </div>
+                )}
+                <ChartErrorBoundary resetKey={c.market + '|' + c.interval}>
+                <Chart
+                  market={c.market}
+                  interval={c.interval}
+                  indicators={indicators}
+                  indicatorParams={indicatorParams}
+                  alertPrices={alertPricesByMarket[c.market] ?? EMPTY}
+                  onAlertAt={(price) => addAlertFor(c.market, price)}
+                  marketOpen={isMarketOpen(c.market)}
+                  active={i === activeIndex}
+                />
+                </ChartErrorBoundary>
+              </div>
+            )
+          })}
+        </div>
       </main>
 
       <Watchlist

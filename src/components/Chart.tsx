@@ -37,6 +37,14 @@ import {
 import DrawingToolbar from './DrawingToolbar'
 import { isPlainKey, isTypingTarget, TOOL_KEYS } from '../lib/shortcuts'
 
+/** Fired after a chart saves drawings, so other charts showing the same market can reload. */
+const DRAWINGS_EVENT = 'chartview:drawings'
+
+function saveAndNotify(market: string, drawings: Drawing[], source: string) {
+  saveDrawings(market, drawings)
+  window.dispatchEvent(new CustomEvent(DRAWINGS_EVENT, { detail: { market, source } }))
+}
+
 export const UP = '#e8473f'
 export const DOWN = '#3b74f0'
 
@@ -52,6 +60,8 @@ interface Props {
   marketOpen?: boolean
   /** Periods / multipliers for the indicators (from the settings panel). */
   indicatorParams?: IndicatorParams
+  /** In a multi-chart layout, only the active chart reacts to keyboard shortcuts. */
+  active?: boolean
   /** Called when the user places an alert with the chart's alert tool. */
   onAlertAt: (price: number) => void
 }
@@ -100,7 +110,11 @@ function fmtCountdown(sec: number): string {
   return d ? `${d}일 ${clock}` : clock
 }
 
-export default function Chart({ market, interval, indicators, alertPrices, onAlertAt, marketOpen = true, indicatorParams = DEFAULT_PARAMS }: Props) {
+export default function Chart({ market, interval, indicators, alertPrices, onAlertAt, marketOpen = true, indicatorParams = DEFAULT_PARAMS, active = true }: Props) {
+  const activeRef = useRef(active)
+  activeRef.current = active
+  /** Identifies this chart in drawing-change events, so it ignores its own. */
+  const instanceId = useRef(Math.random().toString(36).slice(2)).current
   const onAlertAtRef = useRef(onAlertAt)
   onAlertAtRef.current = onAlertAt
   const containerRef = useRef<HTMLDivElement>(null)
@@ -136,7 +150,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
 
   const persist = () => {
     const prim = primRef.current!
-    saveDrawings(marketRef.current, prim.drawings)
+    saveAndNotify(marketRef.current, prim.drawings, instanceId)
     setDrawCount(prim.drawings.length)
   }
 
@@ -311,7 +325,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       setDrafting(false)
       toolRef.current = 'cursor' // a trailing dblclick must not start a new drawing
       setTool('cursor')
-      saveDrawings(marketRef.current, prim.drawings)
+      saveAndNotify(marketRef.current, prim.drawings, instanceId)
       setDrawCount(prim.drawings.length)
       prim.update()
     }
@@ -388,7 +402,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         if (moved) {
           down = null
           pushHistoryRef.current(before)
-          saveDrawings(marketRef.current, prim.drawings)
+          saveAndNotify(marketRef.current, prim.drawings, instanceId)
           return
         }
       }
@@ -484,6 +498,30 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     return () => lines.forEach((l) => series.removePriceLine(l))
   }, [alertPrices])
 
+  // Another chart (same market, other cell) changed the drawings: reload them here.
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      const { market: m, source } = (e as CustomEvent<{ market: string; source: string }>).detail
+      if (source === instanceId || m !== marketRef.current) return
+      const prim = primRef.current
+      if (!prim) return
+      prim.drawings = loadDrawings(m)
+      prim.draft = null
+      if (!prim.drawings.some((d) => d.id === prim.selectedId)) {
+        prim.selectedId = null
+        setSelectedId(null)
+      }
+      undoRef.current = []
+      redoRef.current = []
+      setDrawCount(prim.drawings.length)
+      setHistoryVersion((v) => v + 1)
+      prim.update()
+    }
+    window.addEventListener(DRAWINGS_EVENT, onChange)
+    return () => window.removeEventListener(DRAWINGS_EVENT, onChange)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Each market keeps its own drawings.
   useEffect(() => {
     const prim = primRef.current!
@@ -502,7 +540,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
   // Keyboard: Esc cancels, Delete/Backspace removes the selected drawing, Ctrl+Z / Ctrl+Y undo / redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTypingTarget(e)) return
+      if (!activeRef.current || isTypingTarget(e)) return
       const mod = e.ctrlKey || e.metaKey
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
@@ -725,9 +763,14 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     const c = chartRef.current
     if (!c) return 0
     let top = 0
-    // Panes can briefly lag behind the indicator list (e.g. right after the chart is re-created).
-    const count = c.panes().length
-    for (let k = 0; k < Math.min(pane, count); k++) top += c.paneSize(k).height + 1
+    // Panes can lag behind the indicator list, and a chart that is being torn down
+    // (layout change, hot reload) throws from paneSize — never let that break rendering.
+    try {
+      const count = c.panes().length
+      for (let k = 0; k < Math.min(pane, count); k++) top += c.paneSize(k).height + 1
+    } catch {
+      return 0
+    }
     return top
   }
   const fmtValue = (v: number | null, kind: 'price' | 'plain', ref?: number) =>
