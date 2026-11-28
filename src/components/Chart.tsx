@@ -158,6 +158,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     if (!prev) return
     to.current.push(snapshot())
     prim.drawings = prev
+    textRecordedRef.current = null // next memo edit starts a new undo step
     prim.draft = null
     if (!prev.some((d) => d.id === prim.selectedId)) {
       prim.selectedId = null
@@ -171,7 +172,8 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
   pushHistoryRef.current = pushHistory
   /** Memo that was just placed, so its text box gets focus. */
   const [editingTextId, setEditingTextId] = useState<string | null>(null)
-  const textRecordedRef = useRef(false)
+  /** Id of the memo whose current editing session is already in the undo history. */
+  const textRecordedRef = useRef<string | null>(null)
   const undo = () => restore(undoRef, redoRef)
   const redo = () => restore(redoRef, undoRef)
 
@@ -760,13 +762,13 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
                 aria-label="메모 내용"
                 autoFocus={editingTextId === selectedDrawing.id}
                 defaultValue={selectedDrawing.text ?? ''}
-                onFocus={() => (textRecordedRef.current = false)}
-                onBlur={() => (textRecordedRef.current = false)}
+                onFocus={() => (textRecordedRef.current = null)}
+                onBlur={() => (textRecordedRef.current = null)}
                 onChange={(e) => {
                   // One undo step per editing session: record before the first keystroke.
-                  if (!textRecordedRef.current) {
+                  if (textRecordedRef.current !== selectedDrawing.id) {
                     pushHistory()
-                    textRecordedRef.current = true
+                    textRecordedRef.current = selectedDrawing.id
                   }
                   updateStyle({ text: e.target.value }, false)
                 }}
