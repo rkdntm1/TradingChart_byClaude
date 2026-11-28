@@ -18,7 +18,7 @@ import type {
 } from 'lightweight-charts'
 import { INTERVAL_SEC, type Candle, type Interval } from './market'
 
-export type DrawingType = 'trend' | 'ray' | 'hline' | 'fib' | 'rect' | 'measure'
+export type DrawingType = 'trend' | 'ray' | 'hline' | 'fib' | 'rect' | 'measure' | 'text'
 /** 'alert' is not a drawing: clicking the chart creates a price alert at that price. */
 export type ToolId = 'cursor' | DrawingType | 'alert'
 
@@ -33,7 +33,12 @@ export interface Drawing {
   points: Point[]
   color?: string
   dashed?: boolean
+  /** Text memo content (type 'text'); may contain line breaks. */
+  text?: string
 }
+
+/** Placeholder shown for a new or emptied memo. */
+export const TEXT_PLACEHOLDER = '메모'
 
 /** Palette offered in the style bar for a selected drawing. */
 export const DRAW_COLORS = ['#4f8cff', '#e8473f', '#26a69a', '#f5b301', '#a78bfa', '#e6e8eb']
@@ -45,11 +50,12 @@ const DEFAULT_COLOR: Record<DrawingType, string> = {
   fib: '#8a8f98',
   rect: '#a78bfa',
   measure: '#4f8cff',
+  text: '#f5b301',
 }
 
 export const colorOf = (d: Drawing) => d.color ?? DEFAULT_COLOR[d.type]
 
-export const POINTS_NEEDED: Record<DrawingType, number> = { trend: 2, ray: 2, hline: 1, fib: 2, rect: 2, measure: 2 }
+export const POINTS_NEEDED: Record<DrawingType, number> = { trend: 2, ray: 2, hline: 1, fib: 2, rect: 2, measure: 2, text: 1 }
 
 export { INTERVAL_SEC } from './market'
 
@@ -88,6 +94,8 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
   private series: ISeriesApi<SeriesType> | null = null
   private requestUpdate: (() => void) | null = null
   private width = 0
+  /** Screen box of each text memo from the last paint (id → box). */
+  private textBoxes = new Map<string, { x: number; y: number; w: number; h: number }>()
   private readonly view: IPrimitivePaneView
   private readonly getBars: () => Candle[]
   private readonly getInterval: () => Interval
@@ -237,6 +245,11 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
       if (pts.some((q) => !q)) continue
       const [a, b] = pts as XY[]
       switch (d.type) {
+        case 'text': {
+          const box = this.textBoxes.get(d.id)
+          if (box && x >= box.x - 2 && x <= box.x + box.w + 2 && y >= box.y - 2 && y <= box.y + box.h + 2) return d.id
+          break
+        }
         case 'hline':
           if (Math.abs(y - a.y) <= HIT_PX) return d.id
           break
@@ -319,6 +332,33 @@ export class DrawingsPrimitive implements ISeriesPrimitive<Time> {
         ctx.fillRect(x, y, w, h)
         ctx.strokeStyle = color
         ctx.strokeRect(x, y, w, h)
+        break
+      }
+      case 'text': {
+        const lines = (d.text?.trim() ? d.text : TEXT_PLACEHOLDER).split('\n')
+        ctx.font = '600 13px Pretendard, "Malgun Gothic", system-ui, sans-serif'
+        const lineH = 18
+        const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 14
+        const h = lines.length * lineH + 8
+        const bx = a.x + 6
+        const by = a.y - h / 2
+        ctx.setLineDash([])
+        ctx.fillStyle = 'rgba(15, 17, 21, 0.72)'
+        ctx.beginPath()
+        ctx.roundRect(bx, by, w, h, 5)
+        ctx.fill()
+        ctx.strokeStyle = color
+        ctx.lineWidth = selected ? 1.5 : 1
+        ctx.stroke()
+        ctx.fillStyle = color
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        lines.forEach((l, i) => ctx.fillText(l, bx + 7, by + 4 + lineH / 2 + i * lineH))
+        // small pointer from the anchor to the box
+        ctx.beginPath()
+        ctx.arc(a.x, a.y, 2.5, 0, Math.PI * 2)
+        ctx.fill()
+        this.textBoxes.set(d.id, { x: bx, y: by, w, h })
         break
       }
       case 'measure': {

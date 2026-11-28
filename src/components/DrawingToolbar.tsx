@@ -61,6 +61,15 @@ const TOOLS: { id: ToolId; label: string; icon: ReactNode }[] = [
     icon: icon(<rect x="3" y="4.5" width="12" height="9" rx="1" />),
   },
   {
+    id: 'text',
+    label: '텍스트 메모',
+    icon: icon(
+      <>
+        <path d="M4 4.5h10M9 4.5v10M7 14.5h4" />
+      </>,
+    ),
+  },
+  {
     id: 'measure',
     label: '측정 (가격·%·봉 수·기간)',
     icon: icon(
@@ -91,9 +100,26 @@ interface Props {
   onClear: () => void
   magnet: boolean
   onToggleMagnet: () => void
+  canUndo: boolean
+  canRedo: boolean
+  onUndo: () => void
+  onRedo: () => void
 }
 
-export default function DrawingToolbar({ tool, onTool, canDelete, onDelete, canClear, onClear, magnet, onToggleMagnet }: Props) {
+export default function DrawingToolbar({
+  tool,
+  onTool,
+  canDelete,
+  onDelete,
+  canClear,
+  onClear,
+  magnet,
+  onToggleMagnet,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+}: Props) {
   return (
     <div className="draw-bar">
       {TOOLS.map((t) => (
@@ -121,6 +147,12 @@ export default function DrawingToolbar({ tool, onTool, canDelete, onDelete, canC
             <path d="M4 6.5h3M11 6.5h3M7 3.5v6a2 2 0 0 0 4 0v-6" />
           </>,
         )}
+      </button>
+      <button className="draw-btn" title="실행취소 (Ctrl+Z)" aria-label="실행취소" disabled={!canUndo} onClick={onUndo}>
+        {icon(<path d="M6.5 5.5 3.5 8.5l3 3M3.5 8.5h7a4 4 0 0 1 0 8h-2" />)}
+      </button>
+      <button className="draw-btn" title="다시실행 (Ctrl+Y)" aria-label="다시실행" disabled={!canRedo} onClick={onRedo}>
+        {icon(<path d="M11.5 5.5l3 3-3 3M14.5 8.5h-7a4 4 0 0 0 0 8h2" />)}
       </button>
       <button className="draw-btn" title="선택한 드로잉 삭제 (Delete)" aria-label="선택한 드로잉 삭제" disabled={!canDelete} onClick={onDelete}>
         {icon(<path d="M4.5 4.5l9 9M13.5 4.5l-9 9" />)}

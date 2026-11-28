@@ -29,6 +29,7 @@ import {
   loadDrawings,
   POINTS_NEEDED,
   saveDrawings,
+  TEXT_PLACEHOLDER,
   type Drawing,
   type Point,
   type ToolId,
@@ -138,6 +139,42 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     setDrawCount(prim.drawings.length)
   }
 
+  // Undo / redo: snapshots of the drawing list, per market (cleared on market change).
+  const undoRef = useRef<Drawing[][]>([])
+  const redoRef = useRef<Drawing[][]>([])
+  const [, setHistoryVersion] = useState(0)
+  const HISTORY_LIMIT = 50
+  const snapshot = (): Drawing[] => JSON.parse(JSON.stringify(primRef.current?.drawings ?? []))
+  /** Record the current drawings before a change, so it can be undone. */
+  const pushHistory = (before: Drawing[] = snapshot()) => {
+    undoRef.current.push(before)
+    if (undoRef.current.length > HISTORY_LIMIT) undoRef.current.shift()
+    redoRef.current = []
+    setHistoryVersion((v) => v + 1)
+  }
+  const restore = (from: React.MutableRefObject<Drawing[][]>, to: React.MutableRefObject<Drawing[][]>) => {
+    const prim = primRef.current!
+    const prev = from.current.pop()
+    if (!prev) return
+    to.current.push(snapshot())
+    prim.drawings = prev
+    prim.draft = null
+    if (!prev.some((d) => d.id === prim.selectedId)) {
+      prim.selectedId = null
+      setSelectedId(null)
+    }
+    persist()
+    setHistoryVersion((v) => v + 1)
+    prim.update()
+  }
+  const pushHistoryRef = useRef(pushHistory)
+  pushHistoryRef.current = pushHistory
+  /** Memo that was just placed, so its text box gets focus. */
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
+  const textRecordedRef = useRef(false)
+  const undo = () => restore(undoRef, redoRef)
+  const redo = () => restore(redoRef, undoRef)
+
   const select = (id: string | null) => {
     primRef.current!.selectedId = id
     setSelectedId(id)
@@ -156,6 +193,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
   const deleteSelected = () => {
     const prim = primRef.current!
     if (!prim.selectedId) return
+    pushHistory()
     prim.drawings = prim.drawings.filter((d) => d.id !== prim.selectedId)
     select(null)
     persist()
@@ -163,10 +201,12 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
 
   const [, setStyleVersion] = useState(0)
   const selectedDrawing = selectedId ? primRef.current?.drawings.find((d) => d.id === selectedId) : undefined
-  const updateStyle = (patch: Pick<Drawing, 'color' | 'dashed'>) => {
+  /** Change the selected drawing. `record: false` for keystrokes (history is taken once on focus). */
+  const updateStyle = (patch: Partial<Pick<Drawing, 'color' | 'dashed' | 'text'>>, record = true) => {
     const prim = primRef.current!
     const d = prim.drawings.find((dr) => dr.id === prim.selectedId)
     if (!d) return
+    if (record) pushHistory()
     Object.assign(d, patch)
     persist()
     setStyleVersion((v) => v + 1)
@@ -175,7 +215,8 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
 
   const clearAll = () => {
     const prim = primRef.current!
-    if (!prim.drawings.length || !window.confirm('이 종목의 모든 드로잉을 삭제할까요?')) return
+    if (!prim.drawings.length || !window.confirm('이 종목의 모든 드로잉을 삭제할까요? (Ctrl+Z로 되돌릴 수 있어요)')) return
+    pushHistory()
     prim.drawings = []
     select(null)
     persist()
@@ -257,10 +298,13 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         prim.draft.points[1] = pt
       }
       const done = prim.draft
+      if (done.type === 'text') done.text = ''
+      pushHistoryRef.current()
       prim.drawings = [...prim.drawings, done]
       prim.draft = null
       prim.selectedId = done.id
       setSelectedId(done.id)
+      if (done.type === 'text') setEditingTextId(done.id)
       setDrafting(false)
       toolRef.current = 'cursor' // a trailing dblclick must not start a new drawing
       setTool('cursor')
@@ -288,6 +332,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       orig: Point[]
       start: { logical: number; price: number }
       moved: boolean
+      before: Drawing[] // drawings before the drag, for undo
     } | null = null
     const setChartInteractive = (on: boolean) => chart.applyOptions({ handleScroll: on, handleScale: on })
 
@@ -301,7 +346,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       const d = prim.drawings.find((dr) => dr.id === id)
       const start = prim.rawAt(pos.x, pos.y)
       if (!d || !start) return
-      drag = { id: d.id, index: handle, orig: d.points.map((p) => ({ ...p })), start, moved: false }
+      drag = { id: d.id, index: handle, orig: d.points.map((p) => ({ ...p })), start, moved: false, before: JSON.parse(JSON.stringify(prim.drawings)) }
       if (prim.selectedId !== d.id) {
         prim.selectedId = d.id
         setSelectedId(d.id)
@@ -334,11 +379,12 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
 
     const onPointerUp = (e: PointerEvent) => {
       if (drag) {
-        const moved = drag.moved
+        const { moved, before } = drag
         drag = null
         setChartInteractive(true)
         if (moved) {
           down = null
+          pushHistoryRef.current(before)
           saveDrawings(marketRef.current, prim.drawings)
           return
         }
@@ -439,6 +485,9 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
   useEffect(() => {
     const prim = primRef.current!
     prim.drawings = loadDrawings(market)
+    undoRef.current = []
+    redoRef.current = []
+    setHistoryVersion((v) => v + 1)
     prim.draft = null
     prim.selectedId = null
     setSelectedId(null)
@@ -447,11 +496,23 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     prim.update()
   }, [market])
 
-  // Keyboard: Esc cancels, Delete/Backspace removes the selected drawing.
+  // Keyboard: Esc cancels, Delete/Backspace removes the selected drawing, Ctrl+Z / Ctrl+Y undo / redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return
+      const mod = e.ctrlKey || e.metaKey
+      if (mod && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (mod && e.key.toLowerCase() === 'y') {
+        e.preventDefault()
+        redo()
+        return
+      }
       if (e.key === 'Escape') {
         chooseTool('cursor')
         select(null)
@@ -667,6 +728,10 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         onClear={clearAll}
         magnet={magnet}
         onToggleMagnet={() => setMagnet((m) => !m)}
+        canUndo={undoRef.current.length > 0}
+        canRedo={redoRef.current.length > 0}
+        onUndo={undo}
+        onRedo={redo}
       />
       <div className={`chart-area ${tool !== 'cursor' ? 'drawing' : ''}`}>
       {tool !== 'cursor' && (
@@ -675,6 +740,8 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
             ? '끝 지점을 클릭하세요'
             : tool === 'alert'
               ? '알림을 받을 가격을 클릭하세요'
+              : tool === 'text'
+                ? '메모를 남길 위치를 클릭하세요'
               : tool === 'hline'
                 ? '가격 위치를 클릭하세요'
                 : '시작 지점을 클릭하세요'}{' '}
@@ -683,6 +750,38 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
       )}
       {tool === 'cursor' && selectedDrawing && (
         <div className="draw-props" role="toolbar" aria-label="드로잉 스타일">
+          {selectedDrawing.type === 'text' && (
+            <>
+              <textarea
+                key={selectedDrawing.id}
+                className="memo-input"
+                rows={1}
+                placeholder={TEXT_PLACEHOLDER}
+                aria-label="메모 내용"
+                autoFocus={editingTextId === selectedDrawing.id}
+                defaultValue={selectedDrawing.text ?? ''}
+                onFocus={() => (textRecordedRef.current = false)}
+                onBlur={() => (textRecordedRef.current = false)}
+                onChange={(e) => {
+                  // One undo step per editing session: record before the first keystroke.
+                  if (!textRecordedRef.current) {
+                    pushHistory()
+                    textRecordedRef.current = true
+                  }
+                  updateStyle({ text: e.target.value }, false)
+                }}
+                onKeyDown={(e) => {
+                  // Enter finishes, Shift+Enter adds a line; Esc leaves the box.
+                  if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Escape') {
+                    e.preventDefault()
+                    setEditingTextId(null)
+                    ;(e.target as HTMLTextAreaElement).blur()
+                  }
+                }}
+              />
+              <span className="draw-sep-v" />
+            </>
+          )}
           {selectedDrawing.type !== 'fib' && (
             <>
               {DRAW_COLORS.map((c) => (
@@ -695,19 +794,23 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
                   onClick={() => updateStyle({ color: c })}
                 />
               ))}
-              <span className="draw-sep-v" />
-              <button
-                className={`tb-btn ${!selectedDrawing.dashed ? 'on' : ''}`}
-                onClick={() => updateStyle({ dashed: false })}
-              >
-                실선
-              </button>
-              <button
-                className={`tb-btn ${selectedDrawing.dashed ? 'on' : ''}`}
-                onClick={() => updateStyle({ dashed: true })}
-              >
-                점선
-              </button>
+              {selectedDrawing.type !== 'text' && (
+                <>
+                  <span className="draw-sep-v" />
+                  <button
+                    className={`tb-btn ${!selectedDrawing.dashed ? 'on' : ''}`}
+                    onClick={() => updateStyle({ dashed: false })}
+                  >
+                    실선
+                  </button>
+                  <button
+                    className={`tb-btn ${selectedDrawing.dashed ? 'on' : ''}`}
+                    onClick={() => updateStyle({ dashed: true })}
+                  >
+                    점선
+                  </button>
+                </>
+              )}
               <span className="draw-sep-v" />
             </>
           )}
