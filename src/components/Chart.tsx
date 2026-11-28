@@ -21,7 +21,7 @@ import {
   type Candle,
   type Interval,
 } from '../lib/market'
-import { buildIndicator, INDICATORS, type IndicatorGroup, type IndicatorId } from '../lib/chartIndicators'
+import { buildIndicator, DEFAULT_PARAMS, INDICATORS, type IndicatorGroup, type IndicatorId, type IndicatorParams } from '../lib/chartIndicators'
 import {
   colorOf,
   DRAW_COLORS,
@@ -48,6 +48,8 @@ interface Props {
   alertPrices: number[]
   /** False while the market is closed (US stocks off-hours or on a holiday): hides the bar countdown. */
   marketOpen?: boolean
+  /** Periods / multipliers for the indicators (from the settings panel). */
+  indicatorParams?: IndicatorParams
   /** Called when the user places an alert with the chart's alert tool. */
   onAlertAt: (price: number) => void
 }
@@ -96,7 +98,7 @@ function fmtCountdown(sec: number): string {
   return d ? `${d}일 ${clock}` : clock
 }
 
-export default function Chart({ market, interval, indicators, alertPrices, onAlertAt, marketOpen = true }: Props) {
+export default function Chart({ market, interval, indicators, alertPrices, onAlertAt, marketOpen = true, indicatorParams = DEFAULT_PARAMS }: Props) {
   const onAlertAtRef = useRef(onAlertAt)
   onAlertAtRef.current = onAlertAt
   const containerRef = useRef<HTMLDivElement>(null)
@@ -470,7 +472,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     // Keep a stable order regardless of click order.
     const ordered = INDICATORS.filter((d) => indicators.includes(d.id))
     let nextPane = 1
-    const built = ordered.map((d) => buildIndicator(d.id, chart, d.pane === 'overlay' ? 0 : nextPane++, precision))
+    const built = ordered.map((d) => buildIndicator(d.id, chart, d.pane === 'overlay' ? 0 : nextPane++, precision, indicatorParams))
     const panes = chart.panes()
     // Relative sizes (not pixels) so the split survives window resizes:
     // price pane ≈ 4 parts, each indicator pane 1 part.
@@ -480,7 +482,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     groupsRef.current = built
     setGroups(built)
     built.forEach((g) => g.render(candlesRef.current, false))
-  }, [indicators, precision])
+  }, [indicators, precision, indicatorParams])
 
   // Load data + live updates whenever the market or interval changes.
   useEffect(() => {

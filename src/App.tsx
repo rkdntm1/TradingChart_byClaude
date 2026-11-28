@@ -3,7 +3,8 @@ import AlertPanel from './components/AlertPanel'
 import Chart from './components/Chart'
 import Toasts from './components/Toasts'
 import { useAlerts } from './hooks/useAlerts'
-import { INDICATORS, type IndicatorId } from './lib/chartIndicators'
+import { INDICATORS, normalizeParams, type IndicatorId, type IndicatorParams } from './lib/chartIndicators'
+import IndicatorSettings from './components/IndicatorSettings'
 import Watchlist from './components/Watchlist'
 import { useMarketData } from './hooks/useMarketData'
 import {
@@ -62,6 +63,25 @@ export default function App() {
     setMarket,
   )
   const [alertsOpen, setAlertsOpen] = useState(false)
+
+  // Indicator periods etc., saved as JSON and validated on load.
+  const [indicatorParams, setIndicatorParams] = useState<IndicatorParams>(() => {
+    try {
+      return normalizeParams(JSON.parse(localStorage.getItem('chartview:indicator-params') ?? 'null'))
+    } catch {
+      return normalizeParams(null)
+    }
+  })
+  const applyIndicatorParams = useCallback((p: IndicatorParams) => {
+    setIndicatorParams(p)
+    try {
+      localStorage.setItem('chartview:indicator-params', JSON.stringify(p))
+    } catch {
+      /* storage unavailable */
+    }
+  }, [])
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const closeSettings = useCallback(() => setSettingsOpen(false), [])
   const closeAlerts = useCallback(() => setAlertsOpen(false), [])
   const marketAlertPrices = useMemo(
     () => active.filter((a) => a.market === market).map((a) => a.price),
@@ -190,11 +210,24 @@ export default function App() {
               {d.label}
             </button>
           ))}
+          <button
+            className={`tb-btn ${settingsOpen ? 'on' : ''}`}
+            data-settings-toggle
+            title="지표 기간 설정"
+            aria-label="지표 설정"
+            onClick={() => setSettingsOpen((o) => !o)}
+          >
+            ⚙ 설정
+          </button>
+          {settingsOpen && (
+            <IndicatorSettings params={indicatorParams} onApply={applyIndicatorParams} onClose={closeSettings} />
+          )}
         </div>
         <Chart
           market={market}
           interval={interval}
           indicators={indicators}
+          indicatorParams={indicatorParams}
           alertPrices={marketAlertPrices}
           onAlertAt={addAlertAt}
           marketOpen={!isUs || (session !== 'closed' && !holiday)}
