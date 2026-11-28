@@ -14,6 +14,7 @@ import {
   type Ticker,
   type UsAsset,
 } from '../lib/market'
+import { isPlainKey, isTypingTarget } from '../lib/shortcuts'
 
 type Tab = SourceId | 'fav'
 type SortKey = 'value' | 'change' | 'price'
@@ -107,6 +108,42 @@ export default function Watchlist({ markets, tickers, selected, onSelect, onAddU
       if (cur.dir === -1) return { key, dir: 1 }
       return DEFAULT_SORT
     })
+  // Keyboard: ↑/↓ move through the visible list (also from the search box);
+  // Enter in the search box opens the first result.
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  const selectedRef = useRef(selected)
+  selectedRef.current = selected
+  const onSelectRef = useRef(onSelect)
+  onSelectRef.current = onSelect
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isPlainKey(e)) return
+      const target = e.target as HTMLElement | null
+      const inSearch = !!target?.classList?.contains('search')
+      if (isTypingTarget(e) && !inSearch) return
+      const list = rowsRef.current
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (!list.length) return
+        e.preventDefault()
+        const i = list.findIndex((m) => m.market === selectedRef.current)
+        const next = e.key === 'ArrowDown' ? Math.min(list.length - 1, i + 1) : Math.max(0, i - 1)
+        onSelectRef.current(list[next].market)
+        requestAnimationFrame(() => document.querySelector('.row.sel')?.scrollIntoView({ block: 'nearest' }))
+      } else if (e.key === 'Enter' && inSearch && list[0]) {
+        e.preventDefault()
+        onSelectRef.current(list[0].market)
+        setQuery('')
+        target?.blur()
+      } else if (e.key === 'Escape' && inSearch) {
+        setQuery('')
+        target?.blur()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const arrow = (key: SortKey) => (sort.key === key ? (sort.dir === -1 ? ' ▼' : ' ▲') : '')
 
   return (
@@ -114,7 +151,7 @@ export default function Watchlist({ markets, tickers, selected, onSelect, onAddU
       <div className="side-head">
         <input
           className="search"
-          placeholder="종목명 / 심볼 검색"
+          placeholder="종목명 / 심볼 검색 ( / )"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

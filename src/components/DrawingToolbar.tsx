@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { ToolId } from '../lib/drawings'
+import { toolKey } from '../lib/shortcuts'
 
 const icon = (children: ReactNode) => (
   <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
@@ -126,7 +127,7 @@ export default function DrawingToolbar({
         <button
           key={t.id}
           className={`draw-btn ${tool === t.id ? 'on' : ''}`}
-          title={t.label}
+          title={toolKey(t.id) ? `${t.label} (${toolKey(t.id)})` : t.label}
           aria-label={t.label}
           onClick={() => onTool(t.id)}
         >
@@ -136,7 +137,7 @@ export default function DrawingToolbar({
       <span className="draw-sep" />
       <button
         className={`draw-btn ${magnet ? 'on' : ''}`}
-        title={magnet ? '자석 켜짐: 시가·고가·저가·종가에 붙음' : '자석 꺼짐'}
+        title={magnet ? '자석 켜짐: 시가·고가·저가·종가에 붙음 (G)' : '자석 꺼짐 (G)'}
         aria-label="자석 모드"
         aria-pressed={magnet}
         onClick={onToggleMagnet}

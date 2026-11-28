@@ -5,6 +5,8 @@ import Toasts from './components/Toasts'
 import { useAlerts } from './hooks/useAlerts'
 import { INDICATORS, normalizeParams, type IndicatorId, type IndicatorParams } from './lib/chartIndicators'
 import IndicatorSettings from './components/IndicatorSettings'
+import ShortcutHelp from './components/ShortcutHelp'
+import { intervalKey, isPlainKey, isTypingTarget } from './lib/shortcuts'
 import Watchlist from './components/Watchlist'
 import { useMarketData } from './hooks/useMarketData'
 import {
@@ -82,6 +84,29 @@ export default function App() {
   }, [])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const [helpOpen, setHelpOpen] = useState(false)
+  const closeHelp = useCallback(() => setHelpOpen(false), [])
+
+  // Global shortcuts: 1–9 interval, "/" search, "?" help. (Chart and Watchlist handle their own keys.)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e) || !isPlainKey(e)) return
+      if (e.key === '?') {
+        e.preventDefault()
+        setHelpOpen((o) => !o)
+      } else if (e.key === '/') {
+        e.preventDefault()
+        const search = document.querySelector<HTMLInputElement>('.search')
+        search?.focus()
+        search?.select()
+      } else if (/^[1-9]$/.test(e.key)) {
+        const iv = INTERVALS[Number(e.key) - 1]
+        if (iv) setInterval(iv.id)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setInterval])
   const closeAlerts = useCallback(() => setAlertsOpen(false), [])
   const marketAlertPrices = useMemo(
     () => active.filter((a) => a.market === market).map((a) => a.price),
@@ -192,11 +217,17 @@ export default function App() {
         />
       )}
       <Toasts toasts={toasts} onDismiss={dismissToast} onOpen={setMarket} />
+      {helpOpen && <ShortcutHelp onClose={closeHelp} />}
 
       <main className="main">
         <div className="toolbar">
-          {INTERVALS.map((iv) => (
-            <button key={iv.id} className={`tb-btn ${iv.id === interval ? 'on' : ''}`} onClick={() => setInterval(iv.id)}>
+          {INTERVALS.map((iv, i) => (
+            <button
+              key={iv.id}
+              className={`tb-btn ${iv.id === interval ? 'on' : ''}`}
+              title={intervalKey(i) ? `${iv.label} (${intervalKey(i)})` : iv.label}
+              onClick={() => setInterval(iv.id)}
+            >
               {iv.label}
             </button>
           ))}
@@ -222,6 +253,14 @@ export default function App() {
           {settingsOpen && (
             <IndicatorSettings params={indicatorParams} onApply={applyIndicatorParams} onClose={closeSettings} />
           )}
+          <button
+            className="tb-btn kbd-btn"
+            title="키보드 단축키 (?)"
+            aria-label="키보드 단축키"
+            onClick={() => setHelpOpen(true)}
+          >
+            ⌨
+          </button>
         </div>
         <Chart
           market={market}

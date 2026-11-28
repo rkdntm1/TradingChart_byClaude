@@ -35,6 +35,7 @@ import {
   type ToolId,
 } from '../lib/drawings'
 import DrawingToolbar from './DrawingToolbar'
+import { isPlainKey, isTypingTarget, TOOL_KEYS } from '../lib/shortcuts'
 
 export const UP = '#e8473f'
 export const DOWN = '#3b74f0'
@@ -501,8 +502,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
   // Keyboard: Esc cancels, Delete/Backspace removes the selected drawing, Ctrl+Z / Ctrl+Y undo / redo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return
+      if (isTypingTarget(e)) return
       const mod = e.ctrlKey || e.metaKey
       if (mod && e.key.toLowerCase() === 'z') {
         e.preventDefault()
@@ -520,6 +520,18 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
         select(null)
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         deleteSelected()
+      } else if (isPlainKey(e) && !e.shiftKey) {
+        // Single-letter shortcuts: drawing tools, G = magnet, L = log scale.
+        const k = e.key.toLowerCase()
+        const t = TOOL_KEYS[k]
+        if (t) {
+          e.preventDefault()
+          chooseTool(t)
+        } else if (k === 'g') {
+          setMagnet((m) => !m)
+        } else if (k === 'l') {
+          setScaleMode((cur) => (cur === 'log' ? 'normal' : 'log'))
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -713,7 +725,9 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
     const c = chartRef.current
     if (!c) return 0
     let top = 0
-    for (let k = 0; k < pane; k++) top += c.paneSize(k).height + 1
+    // Panes can briefly lag behind the indicator list (e.g. right after the chart is re-created).
+    const count = c.panes().length
+    for (let k = 0; k < Math.min(pane, count); k++) top += c.paneSize(k).height + 1
     return top
   }
   const fmtValue = (v: number | null, kind: 'price' | 'plain', ref?: number) =>
@@ -882,7 +896,7 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
           <button
             key={m}
             className={`ctrl-btn ${scaleMode === m ? 'on' : ''}`}
-            title={m === 'log' ? '로그 스케일' : '퍼센트 스케일 (화면 첫 봉 기준)'}
+            title={m === 'log' ? '로그 스케일 (L)' : '퍼센트 스케일 (화면 첫 봉 기준)'}
             aria-pressed={scaleMode === m}
             onClick={() => setScaleMode((cur) => (cur === m ? 'normal' : m))}
           >
