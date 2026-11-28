@@ -197,6 +197,7 @@ export default function App() {
           indicators={indicators}
           alertPrices={marketAlertPrices}
           onAlertAt={addAlertAt}
+          marketOpen={!isUs || (session !== 'closed' && !holiday)}
         />
       </main>
 

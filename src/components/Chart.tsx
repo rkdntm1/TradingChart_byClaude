@@ -18,7 +18,6 @@ import {
   KST_OFFSET,
   priceDecimals,
   sourceOf,
-  usSession,
   type Candle,
   type Interval,
 } from '../lib/market'
@@ -47,6 +46,8 @@ interface Props {
   indicators: IndicatorId[]
   /** Active alert prices for this market, drawn as dashed lines. */
   alertPrices: number[]
+  /** False while the market is closed (US stocks off-hours or on a holiday): hides the bar countdown. */
+  marketOpen?: boolean
   /** Called when the user places an alert with the chart's alert tool. */
   onAlertAt: (price: number) => void
 }
@@ -95,7 +96,7 @@ function fmtCountdown(sec: number): string {
   return d ? `${d}일 ${clock}` : clock
 }
 
-export default function Chart({ market, interval, indicators, alertPrices, onAlertAt }: Props) {
+export default function Chart({ market, interval, indicators, alertPrices, onAlertAt, marketOpen = true }: Props) {
   const onAlertAtRef = useRef(onAlertAt)
   onAlertAtRef.current = onAlertAt
   const containerRef = useRef<HTMLDivElement>(null)
@@ -633,12 +634,12 @@ export default function Chart({ market, interval, indicators, alertPrices, onAle
   const change = bar && legend?.prevClose ? ((bar.close - legend.prevClose) / legend.prevClose) * 100 : null
   const legendIndex = legend?.index ?? -1
 
-  // Time left in the current bar. US stocks only while trading, intraday bars only.
+  // Time left in the current bar. US stocks only while trading (App also catches
+  // holidays from the last trade time) and only for intraday bars.
   const source = sourceOf(market)
   const isUs = source.id === 'us'
-  const session = isUs ? usSession(new Date(now)) : null
   const countdownSec =
-    isUs && (session === 'closed' || ['4h', '1D', '1W'].includes(interval))
+    !marketOpen || (isUs && ['4h', '1D', '1W'].includes(interval))
       ? null
       : bucketStart(now, interval, source.candleTzOffset) + INTERVAL_SEC[interval] - now / 1000
 
